@@ -11,23 +11,28 @@ from flask import request, jsonify
 from supabase_client import supabase
 
 
-def _admin_token_valid(request) -> bool:
-    """Return True only if a correct admin token is present."""
-    expected = os.environ.get("ADMIN_TOKEN", "")
-    if not expected:
-        print("[Auth] ADMIN_TOKEN is not configured — refusing all admin access.")
+def is_admin_user(uid: str) -> bool:
+    """True only if this user id is listed in the server-only public.admins table.
+    Clients can't read/write that table (RLS with no policies); only this backend
+    can, using the service_role key."""
+    if not uid:
         return False
-    provided = request.headers.get("X-Admin-Token", "")
-    if not provided:
+    try:
+        res = supabase.table('admins').select('user_id').eq('user_id', uid).limit(1).execute()
+        return bool(res.data)
+    except Exception as e:
+        print(f"[Auth] admin check failed: {e}")
         return False
-    return hmac.compare_digest(provided, expected)
 
 
 def admin_required(fn):
-    """Decorator that blocks a route unless a valid admin token is supplied."""
+    """Decorator: allow only a signed-in Supabase user who is in public.admins.
+    The client must send the user's Supabase session token as
+    'Authorization: Bearer <access_token>'."""
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if not _admin_token_valid(request):
+        uid = get_user_id(request)
+        if not uid or not is_admin_user(uid):
             return jsonify({"error": "Admin authorization required."}), 401
         return fn(*args, **kwargs)
     return wrapper

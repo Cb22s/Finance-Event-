@@ -48,28 +48,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Toggle between login and signup
-  if (toggleMode) {
-    toggleMode.addEventListener('click', (e) => {
-      e.preventDefault();
-      clearError();
-      if (mode === 'login') {
-        mode = 'signup';
-        nameField.style.display = 'block';
-        submitLabel.textContent = 'Create account';
-        toggleHint.textContent = 'Already have an account?';
-        toggleMode.textContent = 'Log in';
-        passEl.setAttribute('autocomplete', 'new-password');
-      } else {
-        mode = 'login';
-        nameField.style.display = 'none';
-        submitLabel.textContent = 'Log in';
-        toggleHint.textContent = 'New here?';
-        toggleMode.textContent = 'Create an account';
-        passEl.setAttribute('autocomplete', 'current-password');
-      }
-    });
-  }
+  // Login only — accounts are pre-created by the admin in Supabase.
+  // Public signup is disabled in Supabase, so there is no "create account" path.
 
   // Submit
   if (form) {
@@ -84,28 +64,12 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       busy(true);
       try {
-        if (mode === 'signup') {
-          const { data, error } = await client.auth.signUp({
-            email,
-            password,
-            options: { data: { name: (nameEl.value || '').trim() || email.split('@')[0] } }
-          });
-          if (error) throw error;
-          // If email confirmation is OFF, a session is returned and the
-          // onAuthStateChange listener redirects. If it's ON, tell the user.
-          if (!data.session) {
-            busy(false);
-            showError('Account created. Check your email to confirm, then log in.');
-            return;
-          }
-        } else {
-          const { error } = await client.auth.signInWithPassword({ email, password });
-          if (error) throw error;
-          // onAuthStateChange handles redirect
-        }
+        const { error } = await client.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        // onAuthStateChange handles the redirect on success
       } catch (err) {
         busy(false);
-        showError(err.message || 'Authentication failed.');
+        showError(err.message || 'Invalid email or password.');
       }
     });
   }

@@ -7,7 +7,7 @@ from flask import Blueprint, request, jsonify
 from supabase_client import supabase
 from services.auth_service import admin_required
 from services.game_service import (
-    get_game_state, get_all_players, get_active_loans,
+    get_game_state, get_all_players, get_active_loans, get_player,
     get_admin_events_for_month, get_pending_sales, validate_rpc_payload
 )
 from engine.monthly_processor import process_month_for_player
@@ -229,10 +229,94 @@ def add_choice():
 # ──────────────────────────────────────────────
 # ADMIN DASHBOARD DATA
 # ──────────────────────────────────────────────
+@admin_bp.route('/admin/me', methods=['GET'])
+@admin_required
+def admin_me():
+    """Lightweight check the admin login page uses to confirm admin rights."""
+    return jsonify({"ok": True})
+
+
 @admin_bp.route('/admin/players', methods=['GET'])
 @admin_required
 def admin_players():
-    """Get all player states for admin overview."""
-    players = get_all_players()
+    """All players with their name/email, ranked by net worth (admin overview)."""
+    res = (supabase.table('player_state')
+           .select('*, users(name, email)')
+           .order('net_worth', desc=True)
+           .execute())
     game = get_game_state()
-    return jsonify({"players": players, "game": game})
+    return jsonify({"players": res.data or [], "game": game})
+
+
+# ──────────────────────────────────────────────
+# PLAYER DETAIL — manual edit (admin correction) + reset
+# Every edit is written to player_month_log for audit.
+# ──────────────────────────────────────────────
+_EDITABLE = ['cash', 'stocks', 'gold', 'emergency_fund', 'loans', 'status']
+_NUMERIC = ['cash', 'stocks', 'gold', 'emergency_fund', 'loans']
+
+
+@admin_bp.route('/admin/update-player', methods=['POST'])
+@admin_required
+def update_player():
+    data = request.json or {}
+    uid = data.get('user_id')
+    if not uid:
+        return jsonify({"error": "user_id is required."}), 400
+
+    current = get_player(uid)
+    if not current:
+        return jsonify({"error": "Player not found."}), 404
+
+    fields = {}
+    for k in _EDITABLE:
+        if k in data and data[k] is not None and data[k] != '':
+            fields[k] = data[k]
+    try:
+        for k in _NUMERIC:
+            if k in fields:
+                fields[k] = float(fields[k])
+    except (ValueError, TypeError):
+        return jsonify({"error": "Financial values must be numbers."}), 400
+
+    if not fields:
+        return jsonify({"error": "Nothing to update."}), 400
+
+    # Net worth is always recomputed from components — never trust a typed value.
+    merged = {**current, **fields}
+    net_worth = (float(merged['cash']) + float(merged['stocks']) + float(merged['gold'])
+                 + float(merged['emergency_fund']) - float(merged['loans']))
+    fields['net_worth'] = net_worth
+
+    try:
+        supabase.table('player_state').update(fields).eq('user_id', uid).execute()
+        # Audit trail — records the correction without touching prior month logs.
+        supabase.table('player_month_log').insert({
+            "user_id": uid,
+            "month": int(merged.get('month', 1)),
+            "starting_cash": float(current.get('cash', 0)),
+            "ending_cash": float(merged['cash']),
+            "net_worth": net_worth,
+            "summary": "🛠️ Admin manual adjustment"
+        }).execute()
+    except Exception as e:
+        return jsonify({"error": f"Update failed: {e}"}), 500
+
+    return jsonify({"message": "Player updated.", "net_worth": net_worth})
+
+
+@admin_bp.route('/admin/reset-player', methods=['POST'])
+@admin_required
+def reset_player():
+    data = request.json or {}
+    uid = data.get('user_id')
+    if not uid:
+        return jsonify({"error": "user_id is required."}), 400
+    try:
+        for table in ['player_state', 'player_loans', 'player_sales',
+                      'player_relative_score', 'player_relative_actions',
+                      'player_month_log']:
+            supabase.table(table).delete().eq('user_id', uid).execute()
+    except Exception as e:
+        return jsonify({"error": f"Reset failed: {e}"}), 500
+    return jsonify({"message": "Player reset — they can allocate again."})

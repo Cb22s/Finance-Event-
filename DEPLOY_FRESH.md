@@ -106,8 +106,36 @@ If all five work, the fresh deployment is good.
   (Google OAuth removed).
 - `frontend/js/config.js` — now points at your new project (placeholders to fill).
 - `backend/.env.example` — **new** template for the backend secrets.
-- Backend Python (routes/engine/services) — **untouched**; its auth already accepts
-  any Supabase JWT, so the login switch needed no backend edits.
+- Backend Python — the student login switch needed no backend edits (its auth
+  already accepts any Supabase JWT). The **admin panel** later added:
+  `admin_setup.sql`, admin auth via the `admins` table in `auth_service.py`, and
+  `/admin/me` + `/admin/update-player` + `/admin/reset-player` in `admin_routes.py`.
+
+## Admin panel (separate email/password login)
+
+Admins log in on their own page and are checked against a server-only `admins`
+table — not the student list, and not the old `ADMIN_TOKEN`.
+
+1. Run **`admin_setup.sql`** in the SQL Editor (creates the `admins` table).
+2. Create the admin's login: **Authentication → Users → Add user** (email +
+   password, tick Auto Confirm User).
+3. Grant admin rights — SQL Editor:
+   ```sql
+   insert into public.admins (user_id)
+   select id from auth.users where email = 'your-admin@email.com'
+   on conflict (user_id) do nothing;
+   ```
+4. Go to **`/admin-login.html`** on your site, log in with that email/password.
+   Non-admins are rejected and signed out automatically.
+
+In the panel, the **Players** section lists everyone and lets you edit cash,
+stocks, gold, emergency fund, loans, and status. Net worth recalculates on save,
+and every edit is logged to `player_month_log` (summary "🛠️ Admin manual
+adjustment"). **Reset** wipes one player's data so they can allocate again.
+
+Note: the admin panel calls the backend, so **the backend must be running and
+pointed at this same project** for admin login and player edits to work. (Student
+login works with just Supabase; admin does not.)
 
 ## Troubleshooting
 
@@ -115,8 +143,12 @@ If all five work, the fresh deployment is good.
   step 2's second file. Run `supabase_signup_trigger.sql`.
 - **Login says "Account created, check your email"** → email confirmation is ON
   (step 3). Either confirm via the email link, or turn it off.
-- **Admin routes return 401** → the token you typed doesn't match `ADMIN_TOKEN` in
-  `backend/.env`, or the backend was started before you set it. Restart the backend.
+- **Admin login says "This account is not an admin"** → you signed in with a real
+  account, but it isn't in the `admins` table. Run the `insert into public.admins`
+  step above for that email.
+- **Admin page bounces to /admin-login or returns 401** → the backend isn't
+  reachable, isn't running the latest code, or points at a different project.
+  Restart/redeploy the backend with the correct `.env`.
 - **Browser console: "Supabase not initialised"** → `config.js` still has the
   placeholder URL/key.
 - **CORS / network errors** → make sure the backend terminal is running on :5000.

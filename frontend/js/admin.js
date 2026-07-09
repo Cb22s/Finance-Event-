@@ -31,38 +31,60 @@ function formatINR(val) {
 }
 
 // ============================================================================
-// ADMIN AUTH — all privileged calls must carry the shared admin token.
-// The token is entered once and kept only in sessionStorage (never committed).
+// ADMIN AUTH — every privileged call carries the admin's Supabase session token.
+// The backend checks the server-only public.admins table. No session, or a
+// session that isn't an admin, bounces the user to the admin login page.
 // ============================================================================
-function getAdminToken() {
-    let t = sessionStorage.getItem('mm_admin_token');
-    if (!t) {
-        t = (prompt('Enter admin access token:') || '').trim();
-        if (t) sessionStorage.setItem('mm_admin_token', t);
-    }
-    return t;
-}
-
-function clearAdminToken() {
-    sessionStorage.removeItem('mm_admin_token');
+function goToAdminLogin() {
+    window.location.href = '/admin-login.html';
 }
 
 // Drop-in replacement for fetch() on protected admin endpoints.
 async function adminFetch(url, options = {}) {
-    const token = getAdminToken();
-    const headers = Object.assign({}, options.headers || {}, { 'X-Admin-Token': token });
+    const { data: { session } } = await window.supabase.auth.getSession();
+    if (!session) { goToAdminLogin(); throw new Error('Not signed in'); }
+    const headers = Object.assign({}, options.headers || {}, {
+        'Authorization': 'Bearer ' + session.access_token
+    });
     const res = await fetch(url, Object.assign({}, options, { headers }));
     if (res.status === 401) {
-        clearAdminToken();
-        if (typeof showToast === 'function') {
-            showToast('Admin token missing or invalid — please re-enter.', 'error');
-        }
+        if (typeof showToast === 'function') showToast('Not authorized as admin. Redirecting to login…', 'error');
+        setTimeout(goToAdminLogin, 1200);
     }
     return res;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     let currentServerMonth = 1;
+
+    // ── Page gate: must be a signed-in admin (adminFetch redirects otherwise) ──
+    adminFetch(`${API_BASE_URL}/admin/me`).catch(() => {});
+
+    // ── Logout ──
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) logoutBtn.addEventListener('click', async () => {
+        await window.supabase.auth.signOut();
+        goToAdminLogin();
+    });
+
+    // ── Players: load + render editable table ──
+    async function loadPlayers() {
+        const box = document.getElementById('playersContainer');
+        try {
+            const res = await adminFetch(`${API_BASE_URL}/admin/players`);
+            if (!res || !res.ok) return;
+            const data = await res.json();
+            const players = data.players || [];
+            box.innerHTML = players.length
+                ? renderPlayersTable(players)
+                : '<p style="color:var(--text-muted); font-size:0.85rem; padding:1rem;">No players have joined yet.</p>';
+        } catch (e) {
+            box.innerHTML = '<p style="color:var(--accent-rose); font-size:0.85rem; padding:1rem;">Failed to load players.</p>';
+        }
+    }
+    window._reloadPlayers = loadPlayers;   // let the global save/reset refresh the list
+    document.getElementById('refreshPlayersBtn').addEventListener('click', loadPlayers);
+    loadPlayers();
 
     // ── Poll game status ──
     async function tickStatus() {
@@ -282,4 +304,90 @@ window.delEvent = async function(id) {
         document.getElementById('eventList').dispatchEvent(event);
         window.location.reload();
     }
+};
+
+// ============================================================================
+// PLAYERS — editable table + save/reset (all via the admin-gated backend)
+// ============================================================================
+function renderPlayersTable(players) {
+    const num = (v) => (v == null ? 0 : v);
+    const field = (key, uid, val) =>
+        `<input class="input-glass" style="padding:0.3rem 0.4rem; font-size:0.8rem; width:92px;" type="number" id="${key}_${uid}" value="${num(val)}">`;
+
+    const row = (p) => {
+        const uid = p.user_id;
+        const name = (p.users && p.users.name) || 'Player';
+        const email = (p.users && p.users.email) || '';
+        const safeName = name.replace(/'/g, '');
+        return `
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <td style="padding:0.5rem; min-width:150px;">
+                <div style="font-weight:600; font-size:0.85rem;">${name}</div>
+                <div style="color:var(--text-muted); font-size:0.72rem;">${email}</div>
+            </td>
+            <td style="padding:0.5rem; text-align:center; font-size:0.8rem;">M${num(p.month)}</td>
+            <td style="padding:0.4rem;">${field('cash', uid, p.cash)}</td>
+            <td style="padding:0.4rem;">${field('stocks', uid, p.stocks)}</td>
+            <td style="padding:0.4rem;">${field('gold', uid, p.gold)}</td>
+            <td style="padding:0.4rem;">${field('emergency_fund', uid, p.emergency_fund)}</td>
+            <td style="padding:0.4rem;">${field('loans', uid, p.loans)}</td>
+            <td style="padding:0.4rem;">
+                <select class="input-glass" style="padding:0.3rem 0.4rem; font-size:0.8rem;" id="status_${uid}">
+                    <option value="active" ${p.status === 'active' ? 'selected' : ''}>active</option>
+                    <option value="waiting" ${p.status === 'waiting' ? 'selected' : ''}>waiting</option>
+                </select>
+            </td>
+            <td style="padding:0.5rem; text-align:right; color:var(--accent-emerald); font-family:var(--font-mono); font-size:0.82rem;">${formatINR(p.net_worth)}</td>
+            <td style="padding:0.4rem; white-space:nowrap;">
+                <button class="btn-glow" style="padding:0.3rem 0.6rem; font-size:0.75rem; border:none; cursor:pointer;" onclick="savePlayer('${uid}')">Save</button>
+                <button class="btn-glow-danger" style="padding:0.3rem 0.6rem; font-size:0.75rem; border:none; cursor:pointer;" onclick="resetPlayer('${uid}','${safeName}')">Reset</button>
+            </td>
+        </tr>`;
+    };
+
+    return `
+    <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+        <thead>
+            <tr style="color:var(--text-muted); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em;">
+                <th style="text-align:left; padding:0.5rem;">Player</th>
+                <th style="padding:0.5rem;">Month</th>
+                <th style="padding:0.5rem;">Cash</th>
+                <th style="padding:0.5rem;">Stocks</th>
+                <th style="padding:0.5rem;">Gold</th>
+                <th style="padding:0.5rem;">Emerg.</th>
+                <th style="padding:0.5rem;">Loans</th>
+                <th style="padding:0.5rem;">Status</th>
+                <th style="padding:0.5rem; text-align:right;">Net Worth</th>
+                <th style="padding:0.5rem;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>${players.map(row).join('')}</tbody>
+    </table>`;
+}
+
+window.savePlayer = async function (uid) {
+    const val = (k) => { const el = document.getElementById(`${k}_${uid}`); return el ? el.value : undefined; };
+    const statusEl = document.getElementById(`status_${uid}`);
+    const payload = {
+        user_id: uid,
+        cash: val('cash'), stocks: val('stocks'), gold: val('gold'),
+        emergency_fund: val('emergency_fund'), loans: val('loans'),
+        status: statusEl ? statusEl.value : undefined
+    };
+    const res = await adminFetch(`${API_BASE_URL}/admin/update-player`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { showToast('Player updated', 'success'); if (window._reloadPlayers) window._reloadPlayers(); }
+    else showToast(data.error || 'Update failed', 'error');
+};
+
+window.resetPlayer = async function (uid, name) {
+    if (!confirm(`Reset ${name || 'this player'}? This wipes their game data and lets them allocate again.`)) return;
+    const res = await adminFetch(`${API_BASE_URL}/admin/reset-player`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: uid })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { showToast('Player reset', 'success'); if (window._reloadPlayers) window._reloadPlayers(); }
+    else showToast(data.error || 'Reset failed', 'error');
 };
