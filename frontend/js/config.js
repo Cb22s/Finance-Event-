@@ -12,7 +12,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const _isLocal = ["localhost", "127.0.0.1"].includes(location.hostname);
 const API_BASE_URL = _isLocal
   ? "http://localhost:5000"
-  : "https://financial-pecc.onrender.com";
+  : "https://finance-event.onrender.com";
 
 window.supabase = window.supabase.createClient(
   SUPABASE_URL,
