@@ -5,6 +5,7 @@
 
 from flask import Blueprint, request, jsonify
 from supabase_client import supabase
+from services.auth_service import admin_required
 from services.game_service import (
     get_game_state, get_all_players, get_active_loans,
     get_admin_events_for_month, get_pending_sales, validate_rpc_payload
@@ -19,6 +20,7 @@ admin_bp = Blueprint('admin', __name__)
 # START / RESTART GAME
 # ──────────────────────────────────────────────
 @admin_bp.route('/start-game', methods=['POST'])
+@admin_required
 def start_game():
     """Reset all game data and start fresh."""
     try:
@@ -49,6 +51,7 @@ def start_game():
 # NEXT MONTH — Core monthly processing using engine
 # ──────────────────────────────────────────────
 @admin_bp.route('/next-month', methods=['POST'])
+@admin_required
 def next_month():
     """
     Process next month for ALL players using the modular engine.
@@ -182,6 +185,7 @@ def next_month():
 # END GAME MANUALLY
 # ──────────────────────────────────────────────
 @admin_bp.route('/end-game', methods=['POST'])
+@admin_required
 def end_game():
     supabase.table('game_control').update({
         'game_status': 'ended'
@@ -193,6 +197,7 @@ def end_game():
 # EVENT MANAGEMENT
 # ──────────────────────────────────────────────
 @admin_bp.route('/event', methods=['POST'])
+@admin_required
 def add_event():
     data = request.json
     if not data:
@@ -202,6 +207,7 @@ def add_event():
 
 
 @admin_bp.route('/event/<int:id>', methods=['DELETE'])
+@admin_required
 def del_event(id):
     supabase.table('events').delete().eq('id', id).execute()
     return jsonify({"message": "Event deleted."})
@@ -211,6 +217,7 @@ def del_event(id):
 # OPTIONAL CHOICE MANAGEMENT
 # ──────────────────────────────────────────────
 @admin_bp.route('/choice-admin', methods=['POST'])
+@admin_required
 def add_choice():
     data = request.json
     if not data:
@@ -223,6 +230,7 @@ def add_choice():
 # ADMIN DASHBOARD DATA
 # ──────────────────────────────────────────────
 @admin_bp.route('/admin/players', methods=['GET'])
+@admin_required
 def admin_players():
     """Get all player states for admin overview."""
     players = get_all_players()

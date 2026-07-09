@@ -2,7 +2,35 @@
 # AUTH SERVICE — Handles user authentication via Supabase
 # =============================================================================
 
+import os
+import hmac
+from functools import wraps
+
+from flask import request, jsonify
+
 from supabase_client import supabase
+
+
+def _admin_token_valid(request) -> bool:
+    """Return True only if a correct admin token is present."""
+    expected = os.environ.get("ADMIN_TOKEN", "")
+    if not expected:
+        print("[Auth] ADMIN_TOKEN is not configured — refusing all admin access.")
+        return False
+    provided = request.headers.get("X-Admin-Token", "")
+    if not provided:
+        return False
+    return hmac.compare_digest(provided, expected)
+
+
+def admin_required(fn):
+    """Decorator that blocks a route unless a valid admin token is supplied."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not _admin_token_valid(request):
+            return jsonify({"error": "Admin authorization required."}), 401
+        return fn(*args, **kwargs)
+    return wrapper
 
 
 def get_user_id(request) -> str | None:

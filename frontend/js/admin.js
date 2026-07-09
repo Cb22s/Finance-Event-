@@ -30,6 +30,37 @@ function formatINR(val) {
     return `₹${Math.floor(val || 0).toLocaleString('en-IN')}`;
 }
 
+// ============================================================================
+// ADMIN AUTH — all privileged calls must carry the shared admin token.
+// The token is entered once and kept only in sessionStorage (never committed).
+// ============================================================================
+function getAdminToken() {
+    let t = sessionStorage.getItem('mm_admin_token');
+    if (!t) {
+        t = (prompt('Enter admin access token:') || '').trim();
+        if (t) sessionStorage.setItem('mm_admin_token', t);
+    }
+    return t;
+}
+
+function clearAdminToken() {
+    sessionStorage.removeItem('mm_admin_token');
+}
+
+// Drop-in replacement for fetch() on protected admin endpoints.
+async function adminFetch(url, options = {}) {
+    const token = getAdminToken();
+    const headers = Object.assign({}, options.headers || {}, { 'X-Admin-Token': token });
+    const res = await fetch(url, Object.assign({}, options, { headers }));
+    if (res.status === 401) {
+        clearAdminToken();
+        if (typeof showToast === 'function') {
+            showToast('Admin token missing or invalid — please re-enter.', 'error');
+        }
+    }
+    return res;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     let currentServerMonth = 1;
 
@@ -58,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('startBtn').addEventListener('click', async () => {
         if (!confirm('Start/restart the game? This will WIPE all player data!')) return;
         try {
-            const res = await fetch(`${API_BASE_URL}/start-game`, { method: 'POST' });
+            const res = await adminFetch(`${API_BASE_URL}/start-game`, { method: 'POST' });
             const data = await res.json();
             showSystemLog(data.message || data.error, res.ok ? 'success' : 'danger');
             showToast(res.ok ? 'Game started!' : 'Failed', res.ok ? 'success' : 'error');
@@ -76,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.innerHTML = '<div class="spinner-glass" style="width:16px;height:16px;border-width:2px;margin:0 auto;"></div>';
 
         try {
-            const res = await fetch(`${API_BASE_URL}/next-month`, {
+            const res = await adminFetch(`${API_BASE_URL}/next-month`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ expected_month: currentServerMonth })
@@ -115,7 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('endBtn').addEventListener('click', async () => {
         if (!confirm('End the game now? This will show the final leaderboard to all players.')) return;
         try {
-            const res = await fetch(`${API_BASE_URL}/end-game`, { method: 'POST' });
+            const res = await adminFetch(`${API_BASE_URL}/end-game`, { method: 'POST' });
             const data = await res.json();
             showSystemLog(data.message, res.ok ? 'success' : 'danger');
             tickStatus();
@@ -189,7 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
             description: document.getElementById('evDesc').value
         };
 
-        const res = await fetch(`${API_BASE_URL}/event`, {
+        const res = await adminFetch(`${API_BASE_URL}/event`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -217,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
             reward_value: parseFloat(document.getElementById('optVal').value)
         };
 
-        const res = await fetch(`${API_BASE_URL}/choice-admin`, {
+        const res = await adminFetch(`${API_BASE_URL}/choice-admin`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -240,7 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── Delete Event (global) ──
 window.delEvent = async function(id) {
-    const res = await fetch(`${API_BASE_URL}/event/${id}`, { method: 'DELETE' });
+    const res = await adminFetch(`${API_BASE_URL}/event/${id}`, { method: 'DELETE' });
     if (res.ok) {
         // Reload events list
         const { data } = await window.supabase.from('events').select('*').order('month');

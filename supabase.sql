@@ -162,15 +162,19 @@ CREATE POLICY "Enable read for all" ON public.events FOR SELECT USING (true);
 CREATE POLICY "Enable read for all" ON public.optional_choices FOR SELECT USING (true);
 CREATE POLICY "Enable read for all" ON public.game_control FOR SELECT USING (true);
 CREATE POLICY "Enable read for all" ON public.relative_events FOR SELECT USING (true);
-CREATE POLICY "Enable all for leaderboard read" ON public.player_state FOR SELECT USING (true);
 
 -- Player-specific policies
-CREATE POLICY "Enable all for user state" ON public.player_state FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Enable all for user sales" ON public.player_sales FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Enable all for user loans" ON public.player_loans FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Enable all for user score" ON public.player_relative_score FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Enable all for user actions" ON public.player_relative_actions FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Enable all for user logs" ON public.player_month_log FOR ALL USING (auth.uid() = user_id);
+-- SECURITY: clients get SELECT-only on their OWN rows. All writes go through
+-- the Flask backend using the service_role key (which bypasses RLS). Using
+-- "FOR ALL" here would let players write their own financial state (cash,
+-- net_worth, ...) straight from the browser and cheat the leaderboard.
+-- Do NOT restore FOR ALL on these tables. See security_fix_rls.sql.
+CREATE POLICY "player_state read own" ON public.player_state FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "player_sales read own" ON public.player_sales FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "player_loans read own" ON public.player_loans FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "player_relative_score read own" ON public.player_relative_score FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "player_relative_actions read own" ON public.player_relative_actions FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "player_month_log read own" ON public.player_month_log FOR SELECT USING (auth.uid() = user_id);
 
 -- ============================================================================
 -- ATOMIC MONTHLY PROCESSING RPC

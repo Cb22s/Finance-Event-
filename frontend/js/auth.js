@@ -1,76 +1,128 @@
+// =============================================================================
+// AUTH — Email + password (Supabase Auth)
+// Replaces the old Google OAuth flow. The backend validates whatever Supabase
+// JWT it receives, so no backend change is needed for this switch.
+// =============================================================================
+
 document.addEventListener('DOMContentLoaded', () => {
-    const loginBtn  = document.getElementById('loginBtn');
-    const errorBox  = document.getElementById('loginError');  // optional UI element
-
-    function showError(msg) {
-        console.error('[Auth]', msg);
-        if (errorBox) { errorBox.textContent = msg; errorBox.classList.remove('d-none'); }
-        else alert(msg);
-    }
-
-    // Auto-redirect if session already exists
-    // checkSessionAndRedirect(); // This is now handled by the onAuthStateChange listener
-
-    // Listen for auth state changes (crucial for OAuth redirect)
-    window.supabase.auth.onAuthStateChange((event, session) => {
-        console.log("🔥 [Auth] Event:", event);
-        if (session && (event === 'SIGNED_IN' || event === 'USER_UPDATED')) {
-            console.log("User logged in:", session.user);
-            window.location.href = '/case-study.html'; // Redirect to case-study page
-        } else if (event === 'SIGNED_OUT') {
-            console.log("User signed out.");
-            window.location.href = '/'; // Redirect to home page on sign out
-        }
-    });
-
-    // Initial check for session on page load
-    checkSessionAndRedirect();
-});
-
-// Expose globally so onclick can find it
-window.loginWithGoogle = async function () {
-  console.log("🔥 [Auth] Login button clicked!");
-
-  const client = window.supabase; // Ensure consistency in calling the Supabase auth client
+  const client = window.supabase;
   if (!client) {
-      console.error("[Auth] Supabase client NOT found. Check config.js.");
-      alert("System Error: Supabase not initialized.");
-      return;
+    alert('System error: Supabase not initialised. Check js/config.js.');
+    return;
   }
 
-  const { data, error } = await client.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: window.location.origin
+  const form        = document.getElementById('authForm');
+  const emailEl     = document.getElementById('email');
+  const passEl      = document.getElementById('password');
+  const nameField   = document.getElementById('nameField');
+  const nameEl      = document.getElementById('fullName');
+  const errorBox    = document.getElementById('loginError');
+  const loader      = document.getElementById('loader');
+  const submitBtn   = document.getElementById('submitBtn');
+  const submitLabel = document.getElementById('submitLabel');
+  const toggleMode  = document.getElementById('toggleMode');
+  const toggleHint  = document.getElementById('toggleHint');
+
+  let mode = 'login'; // 'login' | 'signup'
+
+  function showError(msg) {
+    if (!errorBox) { alert(msg); return; }
+    errorBox.textContent = msg;
+    errorBox.classList.remove('d-none');
+  }
+  function clearError() { errorBox && errorBox.classList.add('d-none'); }
+  function busy(on) {
+    if (loader) loader.style.display = on ? 'block' : 'none';
+    if (submitBtn) submitBtn.disabled = on;
+  }
+
+  // Redirect if already signed in
+  checkSessionAndRedirect();
+
+  // React to auth changes (covers refresh-token restore, sign-out, etc.)
+  client.auth.onAuthStateChange((event, session) => {
+    if (session && (event === 'SIGNED_IN' || event === 'USER_UPDATED')) {
+      window.location.href = '/case-study.html';
+    } else if (event === 'SIGNED_OUT') {
+      window.location.href = '/';
     }
   });
 
-  if (error) console.error("OAuth Error:", error);
-  console.log("RESULT:", data, error);
-};
+  // Toggle between login and signup
+  if (toggleMode) {
+    toggleMode.addEventListener('click', (e) => {
+      e.preventDefault();
+      clearError();
+      if (mode === 'login') {
+        mode = 'signup';
+        nameField.style.display = 'block';
+        submitLabel.textContent = 'Create account';
+        toggleHint.textContent = 'Already have an account?';
+        toggleMode.textContent = 'Log in';
+        passEl.setAttribute('autocomplete', 'new-password');
+      } else {
+        mode = 'login';
+        nameField.style.display = 'none';
+        submitLabel.textContent = 'Log in';
+        toggleHint.textContent = 'New here?';
+        toggleMode.textContent = 'Create an account';
+        passEl.setAttribute('autocomplete', 'current-password');
+      }
+    });
+  }
 
-async function checkSessionAndRedirect() {
-    try {
-        const client = window.supabase; // Ensure consistency in calling the Supabase auth client
-        if (!client) {
-            console.error("[Auth] Supabase client NOT found during session check. Check config.js.");
+  // Submit
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearError();
+      const email = (emailEl.value || '').trim();
+      const password = passEl.value || '';
+      if (!email || password.length < 6) {
+        showError('Enter a valid email and a password of at least 6 characters.');
+        return;
+      }
+      busy(true);
+      try {
+        if (mode === 'signup') {
+          const { data, error } = await client.auth.signUp({
+            email,
+            password,
+            options: { data: { name: (nameEl.value || '').trim() || email.split('@')[0] } }
+          });
+          if (error) throw error;
+          // If email confirmation is OFF, a session is returned and the
+          // onAuthStateChange listener redirects. If it's ON, tell the user.
+          if (!data.session) {
+            busy(false);
+            showError('Account created. Check your email to confirm, then log in.');
             return;
-        }
-
-        const { data: { session } } = await client.auth.getSession();
-        if (session) {
-            // If a session exists, redirect to the case-study page
-            window.location.href = '/case-study.html';
+          }
         } else {
-            // If no session, ensure we are on the home page (or login page)
-            if (window.location.pathname !== '/') {
-                // Only redirect if not already on the home page to avoid unnecessary redirects
-                window.location.href = '/';
-            }
+          const { error } = await client.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+          // onAuthStateChange handles redirect
         }
-    } catch (e) {
-        console.error('[Auth] Session check failed:', e.message);
-        // In case of an error during session check, redirect to home page
-        window.location.href = '/';
-    }
+      } catch (err) {
+        busy(false);
+        showError(err.message || 'Authentication failed.');
+      }
+    });
+  }
+});
+
+// Shared: redirect to the app if a session already exists
+async function checkSessionAndRedirect() {
+  try {
+    const { data: { session } } = await window.supabase.auth.getSession();
+    if (session) window.location.href = '/case-study.html';
+  } catch (e) {
+    console.error('[Auth] Session check failed:', e.message);
+  }
 }
+
+// Global sign-out helper other pages can call
+window.logout = async function () {
+  await window.supabase.auth.signOut();
+  window.location.href = '/';
+};
