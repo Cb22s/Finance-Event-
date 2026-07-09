@@ -1,5 +1,8 @@
+# Static frontend only — no build, no Python.
+# base = "frontend" makes Netlify look for dependency files inside frontend/
+# (there are none), so it skips the Python setup that was failing the deploy.
+# The root runtime.txt / requirements.txt are for the Render backend, not Netlify.
 [build]
-  publish = "frontend"
-
-[build.environment]
-  PYTHON_VERSION = "3.8"
+  base = "frontend"
+  publish = "."
+  command = "echo 'Static site — no build step needed'"
