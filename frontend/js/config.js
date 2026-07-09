@@ -3,9 +3,9 @@
 //    - Project URL      → SUPABASE_URL
 //    - anon public key   → SUPABASE_ANON_KEY   (safe to expose in the browser)
 //    Do NOT put the service_role key here — that belongs only in backend/.env
-const SUPABASE_URL = "https://YOUR-NEW-PROJECT-REF.supabase.co";
+const SUPABASE_URL = "https://ujoqdsesfctxmzmlxewu.supabase.co";
 
-const SUPABASE_ANON_KEY = "PASTE-YOUR-NEW-ANON-PUBLIC-KEY-HERE";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqb3Fkc2VzZmN0eG16bWx4ZXd1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2MDE4MDIsImV4cCI6MjA5OTE3NzgwMn0.QMSm9_jiV_Y-_H4PKWFeHLRgWISrEqELGdGiI_VZcJI";
 
 // Auto-detect: use the local Flask backend when opened via localhost,
 // otherwise the deployed Render backend. No manual switching needed.
