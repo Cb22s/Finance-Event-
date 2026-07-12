@@ -14,9 +14,21 @@ const API_BASE_URL = _isLocal
   ? "http://localhost:5000"
   : "https://finance-event.onrender.com";
 
+// Session persistence: login survives browser restarts; access tokens
+// auto-refresh in the background so users (and admins) are never silently
+// logged out mid-event. Tokens still rotate hourly — a leaked token dies
+// fast, but the session itself lives until explicit logout.
 window.supabase = window.supabase.createClient(
   SUPABASE_URL,
-  SUPABASE_ANON_KEY
+  SUPABASE_ANON_KEY,
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storage: window.localStorage
+    }
+  }
 );
 
 // Backward compatibility for existing code using 'db'

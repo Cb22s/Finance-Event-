@@ -40,7 +40,9 @@ function goToAdminLogin() {
 }
 
 // Drop-in replacement for fetch() on protected admin endpoints.
-async function adminFetch(url, options = {}) {
+// On a 401, silently refreshes the session and retries ONCE before bouncing
+// to login — an expired access token mid-event never kicks the admin out.
+async function adminFetch(url, options = {}, _retried = false) {
     const { data: { session } } = await window.supabase.auth.getSession();
     if (!session) { goToAdminLogin(); throw new Error('Not signed in'); }
     const headers = Object.assign({}, options.headers || {}, {
@@ -48,6 +50,10 @@ async function adminFetch(url, options = {}) {
     });
     const res = await fetch(url, Object.assign({}, options, { headers }));
     if (res.status === 401) {
+        if (!_retried) {
+            const { data, error } = await window.supabase.auth.refreshSession();
+            if (!error && data?.session) return adminFetch(url, options, true);
+        }
         if (typeof showToast === 'function') showToast('Not authorized as admin. Redirecting to login…', 'error');
         setTimeout(goToAdminLogin, 1200);
     }
