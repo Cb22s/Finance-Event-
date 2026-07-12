@@ -12,9 +12,16 @@ from models.constants import (
 )
 
 
-def _seeded_rng(user_id: str, month: int) -> random.Random:
-    """Seeded RNG for per-player-per-month reproducible market calculations."""
-    seed = int(hashlib.sha256(f"{user_id}:{month}:market".encode()).hexdigest(), 16)
+def _seeded_rng(month: int) -> random.Random:
+    """
+    Seeded RNG for the GLOBAL market path (ADR-009).
+
+    Markets are shared reality: every player faces the identical stock/gold
+    returns in the same month. Seeding by month only (not user_id) guarantees
+    fairness on the ranked leaderboard — skill is how you position against
+    the market, not which market you were dealt.
+    """
+    seed = int(hashlib.sha256(f"GLOBAL:{month}:market".encode()).hexdigest(), 16)
     return random.Random(seed)
 
 
@@ -28,8 +35,7 @@ def calculate_investment_growth(player: dict, month: int) -> dict:
     
     Returns updated values and log messages.
     """
-    user_id = player.get('user_id', 'unknown')
-    rng = _seeded_rng(user_id, month)
+    rng = _seeded_rng(month)  # global market path — identical for all players (ADR-009)
 
     stocks = float(player.get('stocks', 0))
     gold = float(player.get('gold', 0))

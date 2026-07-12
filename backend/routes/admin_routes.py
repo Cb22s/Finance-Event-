@@ -239,9 +239,10 @@ def admin_me():
 @admin_bp.route('/admin/players', methods=['GET'])
 @admin_required
 def admin_players():
-    """All players with their name/email, ranked by net worth (admin overview)."""
+    """All players with their name/email, ranked by Financial Health Score (ADR-008)."""
     res = (supabase.table('player_state')
            .select('*, users(name, email)')
+           .order('financial_health_score', desc=True)
            .order('net_worth', desc=True)
            .execute())
     game = get_game_state()

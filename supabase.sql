@@ -74,6 +74,8 @@ CREATE TABLE public.player_state (
     net_worth NUMERIC DEFAULT 0,
     trust_score NUMERIC DEFAULT 0,
     risk_level INTEGER DEFAULT 50,
+    discipline_score NUMERIC DEFAULT 100,        -- ADR-008: running discipline average
+    financial_health_score NUMERIC DEFAULT 0,    -- ADR-008: composite leaderboard score
     status TEXT DEFAULT 'active'  -- 'active' = needs to play, 'waiting' = turn locked
 );
 
@@ -228,6 +230,8 @@ BEGIN
         net_worth = (data->>'net_worth')::numeric,
         trust_score = COALESCE((data->>'trust_score')::numeric, ps.trust_score),
         risk_level = COALESCE((data->>'risk_level')::int, ps.risk_level),
+        discipline_score = COALESCE((data->>'discipline_score')::numeric, ps.discipline_score),
+        financial_health_score = COALESCE((data->>'financial_health_score')::numeric, ps.financial_health_score),
         status = data->>'status'
     FROM json_array_elements(p_updates_player_state) AS data
     WHERE ps.user_id = (data->>'user_id')::uuid;

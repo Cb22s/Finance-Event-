@@ -84,9 +84,25 @@ RISK_LEVEL_THRESHOLDS = {
     "aggressive": 1.0       # > 50% in stocks
 }
 
-# ──── LEADERBOARD SCORING WEIGHTS ────
-LEADERBOARD_WEIGHTS = {
-    "net_worth": 0.50,
-    "stability": 0.30,      # Inverse of risk
-    "trust_score": 0.20
+# ──── FINANCIAL HEALTH SCORE WEIGHTS (ADR-008, ratified 2026-07-11) ────
+# Composite leaderboard score. Formula is PUBLIC to players (ADR-000: player trust).
+# Replaces net-worth-only ranking, which rewarded maximum-leverage gambling.
+SCORE_WEIGHTS = {
+    "net_worth": 0.40,        # Wealth built
+    "liquidity": 0.15,        # Emergency fund adequacy (months of expenses)
+    "debt_control": 0.15,     # Debt relative to assets
+    "risk_protection": 0.15,  # Inverse of portfolio risk score
+    "discipline": 0.15        # Consistency across rounds (no cash crises)
 }
+
+# Net worth component: normalized against total resources received so far
+# (initial budget + salary months). Capped so extreme leverage can't dominate.
+NW_NORMALIZATION_CAP = 1.25
+
+# Liquidity component: emergency fund covering this many months of expenses = full marks
+LIQUIDITY_TARGET_MONTHS = 6
+
+# Monthly discipline grades (averaged across the game)
+DISCIPLINE_CLEAN_MONTH = 100      # Met all obligations from cash flow
+DISCIPLINE_EF_RESCUE = 40         # Emergency fund had to cover a cash deficit
+DISCIPLINE_AUTO_LOAN = 0          # Cash crisis forced an auto-loan

@@ -198,9 +198,9 @@
                                 <div class="podium-card podium-${idx + 1}">
                                     <div class="podium-rank">${trophies[idx]}</div>
                                     <div class="podium-name">${p.users?.name || 'Anonymous'}</div>
-                                    <div class="podium-worth">${formatINR(p.net_worth)}</div>
+                                    <div class="podium-worth">${(p.financial_health_score ?? 0).toFixed(1)} pts</div>
                                     <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.25rem;">
-                                        Trust ${p.trust_score || 0} • Risk ${p.risk_level || 50}
+                                        ${formatINR(p.net_worth)} • Trust ${p.trust_score || 0} • Risk ${p.risk_level || 50}
                                     </div>
                                 </div>
                             `;
@@ -217,6 +217,7 @@
                             <div class="rest-row">
                                 <span class="rank-num">${i + 4}</span>
                                 <span class="player-name">${p.users?.name || 'Anonymous'}</span>
+                                <span class="stat-chip" style="color: var(--accent-amber); font-weight: 600;">${(p.financial_health_score ?? 0).toFixed(1)} pts</span>
                                 <span class="stat-chip" style="color: var(--accent-emerald);">${formatINR(p.net_worth)}</span>
                                 <span class="stat-chip" style="color: var(--accent-cyan);">${p.trust_score || 0}</span>
                                 <span class="stat-chip">${riskLabel(p.risk_level)}</span>

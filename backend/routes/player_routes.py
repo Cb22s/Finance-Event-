@@ -11,8 +11,11 @@ from services.game_service import (
     get_pending_sales, fair_roll, already_bought, mark_bought
 )
 from models.constants import (
-    INITIAL_BUDGET, SELL_PENALTY_RATE, TRUST_HELP_AMOUNTS, TRUST_SCORE_GAIN
+    INITIAL_BUDGET, SELL_PENALTY_RATE, TRUST_HELP_AMOUNTS, TRUST_SCORE_GAIN,
+    LIFESTYLE_COSTS
 )
+from engine.scoring import calculate_financial_health_score
+from engine.market_engine import calculate_risk_score
 
 player_bp = Blueprint('player', __name__)
 
@@ -82,6 +85,18 @@ def allocate_month1():
     if any(v < 0 for v in [cash, stocks, gold_val, emergency]):
         return jsonify({"error": "Allocation values cannot be negative."}), 400
 
+    # Initial risk + Financial Health Score (ADR-008) — deterministic from allocation
+    initial_state = {"cash": cash, "stocks": stocks, "gold": gold_val,
+                     "emergency_fund": emergency, "loans": 0}
+    initial_risk = calculate_risk_score(initial_state)
+    monthly_expense = LIFESTYLE_COSTS.get(lifestyle, LIFESTYLE_COSTS['city'])['total']
+    initial_score = calculate_financial_health_score(
+        net_worth=INITIAL_BUDGET, month=1,
+        emergency_fund=emergency, monthly_expense=monthly_expense,
+        loans=0, total_assets=cash + stocks + gold_val + emergency,
+        risk_score=initial_risk, discipline_avg=100
+    )
+
     new_state = {
         "user_id": user_id,
         "month": 1,
@@ -96,7 +111,9 @@ def allocate_month1():
         "pending_cash_next_month": 0,
         "net_worth": INITIAL_BUDGET,
         "trust_score": 0,
-        "risk_level": 50,
+        "risk_level": initial_risk,
+        "discipline_score": 100,
+        "financial_health_score": initial_score['score'],
         "status": "waiting"
     }
 

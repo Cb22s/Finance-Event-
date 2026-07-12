@@ -136,12 +136,17 @@ def generate_events_for_player(player: dict, month: int, admin_events: list = No
         })
 
     # ──────────────────────────────────────────────
-    # 3. MARKET FLUCTUATION
-    # Always possible, but intensity depends on portfolio
+    # 3. MARKET FLUCTUATION — GLOBAL (ADR-009)
+    # Markets are shared reality: seeded by month only, so every player
+    # sees the identical market event in the same month. Personal events
+    # (emergency, opportunity, social) stay per-player because their
+    # probabilities are driven by the player's own state — consequences
+    # of choices, not luck.
     # ──────────────────────────────────────────────
-    if rng.random() < EVENT_BASE_PROBABILITIES["market_fluctuation"]:
+    market_rng = _seeded_random("GLOBAL", month, "market_events")
+    if market_rng.random() < EVENT_BASE_PROBABILITIES["market_fluctuation"]:
         # Stock markets are volatile
-        stock_change = rng.uniform(-12, 15)  # -12% to +15%
+        stock_change = market_rng.uniform(-12, 15)  # -12% to +15%
         direction = "rose" if stock_change > 0 else "dropped"
         events.append({
             "name": f"Market {direction.title()}",
@@ -154,8 +159,8 @@ def generate_events_for_player(player: dict, month: int, admin_events: list = No
         })
 
         # Gold is more stable but occasionally moves
-        if rng.random() < 0.3:
-            gold_change = rng.uniform(-3, 5)
+        if market_rng.random() < 0.3:
+            gold_change = market_rng.uniform(-3, 5)
             events.append({
                 "name": "Gold Price Movement",
                 "type": "percentage",

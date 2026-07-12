@@ -103,9 +103,15 @@ def get_trust_scores(user_id: str) -> list:
 
 
 def get_leaderboard(limit: int = 50) -> list:
-    """Fetch leaderboard ranked by net_worth."""
+    """
+    Fetch leaderboard ranked by Financial Health Score (ADR-008).
+    Net worth is the tiebreaker and remains visible, but ranking rewards
+    balanced financial management, not just wealth accumulation.
+    """
     res = (supabase.table('player_state')
-           .select('user_id, net_worth, trust_score, risk_level, month, users(name)')
+           .select('user_id, financial_health_score, net_worth, trust_score, '
+                   'risk_level, discipline_score, month, users(name)')
+           .order('financial_health_score', desc=True)
            .order('net_worth', desc=True)
            .limit(limit)
            .execute())
@@ -137,7 +143,7 @@ PLAYER_STATE_REQUIRED = {
     'user_id', 'month', 'cash', 'stocks', 'gold',
     'emergency_fund', 'lifestyle_type', 'bike_status',
     'loans', 'pending_cash_next_month', 'bike_lock_in_months',
-    'net_worth', 'status'
+    'net_worth', 'discipline_score', 'financial_health_score', 'status'
 }
 LOAN_UPDATE_REQUIRED = {'id', 'user_id', 'current_amount', 'status'}
 LOAN_INSERT_REQUIRED = {'user_id', 'principal', 'current_amount', 'interest_rate', 'month_taken', 'status'}

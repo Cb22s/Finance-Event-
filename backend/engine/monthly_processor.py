@@ -9,11 +9,15 @@ from models.constants import (
     LOAN_INTEREST_RATE, LOAN_EMI_FRACTION,
     INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH
 )
+from models.constants import (
+    DISCIPLINE_CLEAN_MONTH, DISCIPLINE_EF_RESCUE, DISCIPLINE_AUTO_LOAN
+)
 from engine.event_engine import generate_events_for_player, apply_event_to_state
 from engine.market_engine import (
     calculate_investment_growth, calculate_inflation_adjustment,
     calculate_net_worth, calculate_risk_score
 )
+from engine.scoring import calculate_financial_health_score, update_discipline_average
 
 
 def process_month_for_player(player: dict, month: int,
@@ -172,12 +176,15 @@ def process_month_for_player(player: dict, month: int,
 
     # ════════════════════════════════════════════
     # STEP 8: SAFETY NET — Emergency fund covers deficit
+    # Also grades this month's financial discipline (ADR-008)
     # ════════════════════════════════════════════
+    month_discipline = DISCIPLINE_CLEAN_MONTH
     if cash < 0:
         deficit = abs(cash)
         if emergency_fund >= deficit:
             emergency_fund -= deficit
             cash = 0
+            month_discipline = DISCIPLINE_EF_RESCUE
             event_log.append(f"🛡️ Emergency fund covered deficit of ₹{deficit:,.0f}")
         else:
             # Use whatever emergency fund is available
@@ -194,6 +201,7 @@ def process_month_for_player(player: dict, month: int,
             })
             total_loan_outstanding += deficit
             cash = 0
+            month_discipline = DISCIPLINE_AUTO_LOAN
             event_log.append(f"⚠️ CRITICAL: Cash deficit! Emergency fund depleted. Auto-loan of ₹{deficit:,.0f} taken at {LOAN_INTEREST_RATE*100}% interest!")
 
     # ════════════════════════════════════════════
@@ -213,6 +221,27 @@ def process_month_for_player(player: dict, month: int,
     # Net worth
     net_worth = calculate_net_worth(cash, stocks, gold, emergency_fund, total_loan_outstanding)
 
+    # ════════════════════════════════════════════
+    # STEP 10: FINANCIAL HEALTH SCORE (ADR-008)
+    # Composite leaderboard metric — formula is public to players
+    # ════════════════════════════════════════════
+    prev_discipline = float(player.get('discipline_score', 100) or 100)
+    discipline_avg = update_discipline_average(prev_discipline, month, month_discipline)
+    total_assets = cash + stocks + gold + emergency_fund
+    score_result = calculate_financial_health_score(
+        net_worth=net_worth, month=month,
+        emergency_fund=emergency_fund, monthly_expense=adjusted_expense,
+        loans=total_loan_outstanding, total_assets=total_assets,
+        risk_score=risk_level, discipline_avg=discipline_avg
+    )
+    c = score_result['components']
+    event_log.append(
+        f"📊 Financial Health Score: {score_result['score']:.1f} "
+        f"(NW {c['net_worth']:.0f} | Liquidity {c['liquidity']:.0f} | "
+        f"Debt {c['debt_control']:.0f} | Protection {c['risk_protection']:.0f} | "
+        f"Discipline {c['discipline']:.0f})"
+    )
+
     event_log.append(f"═══ Month {month} Net Worth: ₹{net_worth:,.0f} ═══")
 
     updated_state = {
@@ -230,6 +259,8 @@ def process_month_for_player(player: dict, month: int,
         "net_worth": round(net_worth, 2),
         "trust_score": round(trust_score, 2),
         "risk_level": risk_level,
+        "discipline_score": discipline_avg,
+        "financial_health_score": score_result['score'],
         "status": "active"
     }
 
