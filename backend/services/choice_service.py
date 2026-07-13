@@ -4,7 +4,7 @@
 # =============================================================================
 
 from supabase_client import supabase
-from services.game_service import fair_roll, already_bought, mark_bought
+from services.game_service import fair_roll, already_bought, mark_action
 
 
 def execute_choice(player: dict, choice_id: int) -> dict:
@@ -23,7 +23,7 @@ def execute_choice(player: dict, choice_id: int) -> dict:
     current_m = player['month']
     cash = float(player['cash'])
 
-    # Idempotency guard
+    # Idempotency guard (fast, friendly path)
     if already_bought(user_id, current_m, choice_id):
         return {"error": "You already made this choice this month!"}
 
@@ -37,6 +37,12 @@ def execute_choice(player: dict, choice_id: int) -> dict:
 
     if cash < cost:
         return {"error": f"Not enough cash! You need ₹{cost:,.0f} but have ₹{cash:,.0f}"}
+
+    # Atomically CLAIM the purchase before touching money. The PRIMARY KEY on
+    # player_month_actions makes this fail if a concurrent request already
+    # claimed it, so cash can never be deducted twice for the same choice.
+    if not mark_action(user_id, current_m, f"choice:{choice_id}"):
+        return {"error": "You already made this choice this month!"}
 
     # Deduct cost
     cash -= cost
@@ -59,8 +65,7 @@ def execute_choice(player: dict, choice_id: int) -> dict:
     else:
         message = f"{choice['name']} didn't work out. Lost ₹{cost:,.0f}."
 
-    # Single DB write with all changes
+    # Single DB write with all changes (purchase already claimed above)
     supabase.table('player_state').update(reward_updates).eq('user_id', user_id).execute()
-    mark_bought(user_id, current_m, choice_id)
 
     return {"success": did_win, "message": message}

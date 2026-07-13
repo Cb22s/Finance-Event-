@@ -38,7 +38,8 @@ STOCK_VOLATILITY_MAX = 0.20     # Can rise 20%
 
 # ──── LOAN PARAMETERS ────
 LOAN_INTEREST_RATE = 0.12       # 12% per month
-LOAN_EMI_FRACTION = 0.10        # EMI = 10% of principal per month
+LOAN_EMI_FRACTION = 0.10        # (legacy) flat-EMI fraction — kept for reference
+LOAN_TERM_MONTHS = 6            # Loans amortize (pay down to zero) over this many months
 
 # ──── BIKE PARAMETERS ────
 BIKE_DOWN_PAYMENT = 10000

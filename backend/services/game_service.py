@@ -3,12 +3,7 @@
 # =============================================================================
 
 import hashlib
-from collections import defaultdict
 from supabase_client import supabase
-
-
-# ──── In-memory rate limiting for purchases ────
-_rate_limit: dict = defaultdict(set)
 
 
 def get_game_state() -> dict | None:
@@ -127,15 +122,46 @@ def fair_roll(user_id: str, month: int, choice_id: int, probability: int) -> boo
     return roll <= probability
 
 
-# ──── Purchase Rate Limiting ────
+# ──── Per-month Action Idempotency (durable, DB-backed) ────
+# Survives server restarts and is shared across all web workers, unlike the
+# old in-memory dict. Backed by public.player_month_actions (see
+# idempotency_migration.sql).
+def action_done(user_id: str, month: int, action_key: str) -> bool:
+    """True if this (user, month, action_key) has already been recorded."""
+    res = (supabase.table('player_month_actions')
+           .select('action_key')
+           .eq('user_id', user_id)
+           .eq('month', month)
+           .eq('action_key', action_key)
+           .limit(1)
+           .execute())
+    return bool(res.data)
+
+
+def mark_action(user_id: str, month: int, action_key: str) -> bool:
+    """
+    Record the action. Returns False if it was already recorded (the PRIMARY
+    KEY makes the insert fail), giving an atomic 'claim' that closes the
+    check-then-act race between concurrent requests.
+    """
+    try:
+        supabase.table('player_month_actions').insert({
+            'user_id': user_id,
+            'month': month,
+            'action_key': action_key
+        }).execute()
+        return True
+    except Exception:
+        return False
+
+
+# Backwards-compatible wrappers for optional-choice purchases.
 def already_bought(user_id: str, month: int, choice_id: int) -> bool:
-    key = f"{user_id}:{month}"
-    return choice_id in _rate_limit[key]
+    return action_done(user_id, month, f"choice:{choice_id}")
 
 
-def mark_bought(user_id: str, month: int, choice_id: int):
-    key = f"{user_id}:{month}"
-    _rate_limit[key].add(choice_id)
+def mark_bought(user_id: str, month: int, choice_id: int) -> bool:
+    return mark_action(user_id, month, f"choice:{choice_id}")
 
 
 # ──── RPC Payload Validator ────

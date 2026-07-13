@@ -8,7 +8,7 @@ from services.auth_service import get_user_id
 from services.game_service import (
     get_game_state, get_player, get_total_loans,
     get_optional_choices, get_trust_scores, get_all_event_logs,
-    get_pending_sales, fair_roll, already_bought, mark_bought
+    get_pending_sales, fair_roll, mark_action
 )
 from models.constants import (
     INITIAL_BUDGET, SELL_PENALTY_RATE, TRUST_HELP_AMOUNTS, TRUST_SCORE_GAIN,
@@ -70,7 +70,6 @@ def allocate_month1():
             "error": f"Must allocate exactly ₹{INITIAL_BUDGET:,}. Current total: ₹{total:,.0f}"
         }), 400
 
-    cash = float(data.get('misc', 0))
     bike_status = bool(data.get('bike_status', False))
     lifestyle = data.get('lifestyle_type', 'city')
 
@@ -81,9 +80,31 @@ def allocate_month1():
     gold_val = float(data.get('gold', 0))
     emergency = float(data.get('emergency_fund', 0))
 
+    # Money conservation: everything the player didn't invest and didn't spend
+    # on the bike stays as starting CASH. Previously only 'misc' was kept and
+    # the rent/transport/food/family buckets silently vanished (and month-1 net
+    # worth was hard-coded to the full budget), which made net worth appear to
+    # crash between month 1 and month 2. Recurring living costs are charged from
+    # month 2 onward by the monthly processor, so month-1 living isn't lost here.
+    bike_down_payment = float(data.get('bike_down_payment', 0))
+    cash = (float(data.get('misc', 0)) + float(data.get('rent', 0))
+            + float(data.get('transport', 0)) + float(data.get('food', 0))
+            + float(data.get('family', 0)))
+
+    # The bike down payment is the one bucket genuinely consumed — it buys the
+    # bike (which grants the transport discount + EMI). Only deduct it if a bike
+    # was actually purchased, so the money can't disappear on a mismatch.
+    if not bike_status:
+        cash += bike_down_payment  # no bike bought → keep the money as cash
+        bike_down_payment = 0
+
     # Validate no negative values
-    if any(v < 0 for v in [cash, stocks, gold_val, emergency]):
+    if any(v < 0 for v in [cash, stocks, gold_val, emergency, bike_down_payment]):
         return jsonify({"error": "Allocation values cannot be negative."}), 400
+
+    # Honest month-1 net worth = assets actually held (no loans yet). The bike
+    # down payment is spent, so it is not counted as an asset.
+    initial_net_worth = cash + stocks + gold_val + emergency
 
     # Initial risk + Financial Health Score (ADR-008) — deterministic from allocation
     initial_state = {"cash": cash, "stocks": stocks, "gold": gold_val,
@@ -91,7 +112,7 @@ def allocate_month1():
     initial_risk = calculate_risk_score(initial_state)
     monthly_expense = LIFESTYLE_COSTS.get(lifestyle, LIFESTYLE_COSTS['city'])['total']
     initial_score = calculate_financial_health_score(
-        net_worth=INITIAL_BUDGET, month=1,
+        net_worth=initial_net_worth, month=1,
         emergency_fund=emergency, monthly_expense=monthly_expense,
         loans=0, total_assets=cash + stocks + gold_val + emergency,
         risk_score=initial_risk, discipline_avg=100
@@ -109,7 +130,7 @@ def allocate_month1():
         "bike_lock_in_months": 3 if bike_status else 0,
         "loans": 0,
         "pending_cash_next_month": 0,
-        "net_worth": INITIAL_BUDGET,
+        "net_worth": initial_net_worth,
         "trust_score": 0,
         "risk_level": initial_risk,
         "discipline_score": 100,
@@ -124,7 +145,7 @@ def allocate_month1():
             "month": 1,
             "starting_cash": INITIAL_BUDGET,
             "ending_cash": cash,
-            "net_worth": INITIAL_BUDGET,
+            "net_worth": initial_net_worth,
             "summary": "💼 Initial Allocation Completed. Your financial journey begins!"
         }).execute()
     except Exception as e:
@@ -293,20 +314,39 @@ def handle_relative():
     trust_gain = TRUST_SCORE_GAIN.get(action, 0)
 
     cash = float(player['cash'])
-    if cost > 0 and cash < cost:
-        return jsonify({"error": f"Not enough cash. Need ₹{cost:,} but have ₹{cash:,.0f}"}), 400
+    month = player['month']
 
-    if cost > 0:
+    # A committing action (spending on a relative) can be done ONCE per relative
+    # per month. Declining ('none') is free and doesn't consume the slot, so a
+    # player can still change their mind. Without this, trust was farmable by
+    # calling this endpoint repeatedly in the same month.
+    if action != 'none':
+        if cash < cost:
+            return jsonify({"error": f"Not enough cash. Need ₹{cost:,} but have ₹{cash:,.0f}"}), 400
+        # Atomic claim — PRIMARY KEY makes a duplicate insert fail.
+        if not mark_action(user_id, month, f"relative:{relative_type}"):
+            return jsonify({"error": "You already helped this relative this month."}), 400
+
+    # Apply cash cost + trust gain as a DELTA to the single source of truth
+    # (player_state.trust_score). Previously this endpoint OVERWROTE trust_score
+    # with the sum of relative rows, which wiped the trust the monthly event
+    # engine adds/removes. Both systems now add deltas to the same field.
+    if action != 'none':
         cash -= cost
-        supabase.table('player_state').update({'cash': cash}).eq('user_id', user_id).execute()
+        current_trust = float(player.get('trust_score', 0) or 0)
+        supabase.table('player_state').update({
+            'cash': cash,
+            'trust_score': current_trust + trust_gain
+        }).eq('user_id', user_id).execute()
 
-    # Update relative trust score
+    # Keep the per-relative rows for audit / total_spent (no longer used to
+    # reset player_state.trust_score).
     existing = supabase.table('player_relative_score').select('*').eq('user_id', user_id).eq('relative_type', relative_type).execute()
     if existing.data:
-        current_trust = int(existing.data[0].get('trust_score', 0))
+        current_rel_trust = int(existing.data[0].get('trust_score', 0))
         current_spent = float(existing.data[0].get('total_spent', 0))
         supabase.table('player_relative_score').update({
-            'trust_score': current_trust + trust_gain,
+            'trust_score': current_rel_trust + trust_gain,
             'total_spent': current_spent + cost
         }).eq('user_id', user_id).eq('relative_type', relative_type).execute()
     else:
@@ -320,16 +360,11 @@ def handle_relative():
     # Log the action
     supabase.table('player_relative_actions').insert({
         'user_id': user_id,
-        'month': player['month'],
+        'month': month,
         'relative_type': relative_type,
         'action_taken': action,
         'amount_spent': cost
     }).execute()
-
-    # Update overall trust score in player state
-    all_trust = supabase.table('player_relative_score').select('trust_score').eq('user_id', user_id).execute()
-    total_trust = sum(int(t.get('trust_score', 0)) for t in (all_trust.data or []))
-    supabase.table('player_state').update({'trust_score': total_trust}).eq('user_id', user_id).execute()
 
     if action == 'none':
         return jsonify({"message": f"You chose not to help. No trust gained.", "trust_change": 0})
@@ -341,9 +376,9 @@ def handle_relative():
         })
 
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────
 # LEADERBOARD
-# ──────────────────────────────────────────────
+# ──────────────────────────────
 @player_bp.route('/leaderboard', methods=['GET'])
 def get_leaderboard():
     from services.game_service import get_leaderboard
@@ -351,9 +386,9 @@ def get_leaderboard():
     return jsonify(data)
 
 
-# ──────────────────────────────────────────────
+# ──────────────────────────────
 # EVENT HISTORY — Get all logs for the player
-# ──────────────────────────────────────────────
+# ──────────────────────────────
 @player_bp.route('/event-history', methods=['GET'])
 def event_history():
     user_id = get_user_id(request)

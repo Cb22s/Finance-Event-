@@ -6,9 +6,27 @@
 
 from models.constants import (
     MONTHLY_INCOME, LIFESTYLE_COSTS, BIKE_EMI,
-    LOAN_INTEREST_RATE, LOAN_EMI_FRACTION,
+    LOAN_INTEREST_RATE, LOAN_TERM_MONTHS,
     INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH
 )
+
+
+def _amortized_emi(principal: float, rate: float, term_months: int) -> float:
+    """
+    Fixed monthly payment that fully repays `principal` over `term_months`
+    at monthly interest `rate` (standard amortization formula).
+    Because it depends only on the loan's fixed principal/rate/term, it is the
+    same every month and is guaranteed to be larger than the monthly interest,
+    so the balance always shrinks to zero. This replaces the old flat EMI
+    (fraction of principal) which was smaller than the interest and made loans
+    grow forever.
+    """
+    if principal <= 0 or term_months <= 0:
+        return 0.0
+    if rate <= 0:
+        return principal / term_months
+    factor = (1 + rate) ** term_months
+    return principal * rate * factor / (factor - 1)
 from models.constants import (
     DISCIPLINE_CLEAN_MONTH, DISCIPLINE_EF_RESCUE, DISCIPLINE_AUTO_LOAN
 )
@@ -149,22 +167,25 @@ def process_month_for_player(player: dict, month: int,
             current_amount = float(loan['current_amount'])
             rate = float(loan.get('interest_rate', LOAN_INTEREST_RATE))
 
-            # Apply interest
+            # Apply interest on the outstanding balance
             interest = current_amount * rate
             current_amount += interest
 
-            # Pay EMI
-            emi = principal * LOAN_EMI_FRACTION
-            cash -= emi
-            current_amount -= emi
+            # Amortized EMI (fixed for the loan; always exceeds interest so the
+            # balance shrinks to zero over LOAN_TERM_MONTHS). Never pay more than
+            # what's owed on the final installment.
+            emi = _amortized_emi(principal, rate, LOAN_TERM_MONTHS)
+            payment = min(emi, current_amount)
+            cash -= payment
+            current_amount -= payment
 
-            if current_amount <= 0:
+            if current_amount <= 0.01:
                 current_amount = 0
                 status = 'paid'
                 event_log.append(f"✅ Loan #{loan_id} fully paid off!")
             else:
                 status = 'active'
-                event_log.append(f"💳 Loan #{loan_id}: EMI ₹{emi:,.0f}, Interest ₹{interest:,.0f}")
+                event_log.append(f"💳 Loan #{loan_id}: EMI ₹{payment:,.0f}, Interest ₹{interest:,.0f}")
 
             total_loan_outstanding += max(0, current_amount)
             loan_updates.append({

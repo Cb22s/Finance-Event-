@@ -37,6 +37,7 @@ def start_game():
         supabase.table('player_relative_score').delete().neq('user_id', dummy).execute()
         supabase.table('player_relative_actions').delete().neq('user_id', dummy).execute()
         supabase.table('player_month_log').delete().neq('user_id', dummy).execute()
+        supabase.table('player_month_actions').delete().neq('user_id', dummy).execute()
 
         # Wipe events and choices
         supabase.table('events').delete().neq('id', 0).execute()
@@ -316,7 +317,7 @@ def reset_player():
     try:
         for table in ['player_state', 'player_loans', 'player_sales',
                       'player_relative_score', 'player_relative_actions',
-                      'player_month_log']:
+                      'player_month_log', 'player_month_actions']:
             supabase.table(table).delete().eq('user_id', uid).execute()
     except Exception as e:
         return jsonify({"error": f"Reset failed: {e}"}), 500
