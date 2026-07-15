@@ -25,7 +25,7 @@ def _seeded_rng(month: int) -> random.Random:
     return random.Random(seed)
 
 
-def calculate_investment_growth(player: dict, month: int) -> dict:
+def calculate_investment_growth(player: dict, month: int, auto_market: bool = True) -> dict:
     """
     Calculate monthly investment growth with volatility.
 
@@ -58,7 +58,7 @@ def calculate_investment_growth(player: dict, month: int) -> dict:
     gold_fluctuation = rng.uniform(-0.02, 0.03)  # Small range
 
     # ──── STOCKS (Volatile) ────
-    if stocks > 0:
+    if auto_market and stocks > 0:
         # Base growth + random volatility
         stock_growth_rate = STOCK_BASE_GROWTH + volatility
         stock_delta = stocks * stock_growth_rate
@@ -68,7 +68,7 @@ def calculate_investment_growth(player: dict, month: int) -> dict:
         logs.append(f"{direction} Stocks: {stock_growth_rate*100:+.1f}% (₹{stock_delta:+,.0f})")
 
     # ──── GOLD (Stable) ────
-    if gold > 0:
+    if auto_market and gold > 0:
         gold_growth_rate = GOLD_BASE_GROWTH + gold_fluctuation
         gold_delta = gold * gold_growth_rate
         gold += gold_delta

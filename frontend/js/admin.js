@@ -487,3 +487,47 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btn) btn.addEventListener('click', loadRoster);
     loadRoster();
 });
+
+
+// Game Controls - toggle the automatic layer (auto events / auto market).
+// Both OFF = full manual admin control (the default). Reads current state from
+// /game-status and writes changes to /admin/settings.
+document.addEventListener('DOMContentLoaded', () => {
+    const evEl = document.getElementById('toggleAutoEvents');
+    const mkEl = document.getElementById('toggleAutoMarket');
+    const hint = document.getElementById('settingsHint');
+    if (!evEl || !mkEl) return;
+
+    function renderHint() {
+        if (!hint) return;
+        const manual = !evEl.checked && !mkEl.checked;
+        hint.innerText = manual
+            ? 'Full manual control: only the events YOU add fire, and markets move only when you set them.'
+            : `Automatic: random events ${evEl.checked ? 'ON' : 'off'}, market ${mkEl.checked ? 'ON' : 'off'}.`;
+    }
+    async function loadSettings() {
+        try {
+            const res = await fetch(`${API_BASE_URL}/game-status`);
+            if (!res.ok) return;
+            const g = await res.json();
+            evEl.checked = !!g.auto_events;
+            mkEl.checked = !!g.auto_market;
+            renderHint();
+        } catch (e) { /* ignore */ }
+    }
+    async function save(field, value) {
+        try {
+            const res = await adminFetch(`${API_BASE_URL}/admin/settings`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [field]: value })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) { showToast('Setting saved', 'success'); renderHint(); }
+            else { showToast(data.error || 'Save failed', 'error'); loadSettings(); }
+        } catch (err) { showToast('Save failed', 'error'); loadSettings(); }
+    }
+    evEl.addEventListener('change', () => save('auto_events', evEl.checked));
+    mkEl.addEventListener('change', () => save('auto_market', mkEl.checked));
+    loadSettings();
+});

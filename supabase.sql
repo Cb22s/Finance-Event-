@@ -53,7 +53,9 @@ CREATE TABLE public.optional_choices (
 CREATE TABLE public.game_control (
     id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     current_month INTEGER DEFAULT 1,
-    game_status TEXT DEFAULT 'waiting'
+    game_status TEXT DEFAULT 'waiting',
+    auto_events BOOLEAN NOT NULL DEFAULT false,
+    auto_market BOOLEAN NOT NULL DEFAULT false
 );
 
 INSERT INTO public.game_control (id, current_month, game_status) VALUES (1, 1, 'waiting');

@@ -41,7 +41,7 @@ def _calculate_risk_level(player: dict) -> str:
         return "moderate"
 
 
-def generate_events_for_player(player: dict, month: int, admin_events: list = None) -> list:
+def generate_events_for_player(player: dict, month: int, admin_events: list = None, auto_generate: bool = True) -> list:
     """
     Generate a list of events for a specific player in a specific month.
     
@@ -55,6 +55,25 @@ def generate_events_for_player(player: dict, month: int, admin_events: list = No
       {name, type, description, impact_target, value, severity}
     """
     user_id = player.get('user_id', 'unknown')
+
+    # MANUAL-CONTROL MODE (game_control.auto_events = false): the engine does
+    # NOT invent random emergencies/opportunities/spikes. Only the events the
+    # admin authored for this month fire. This is the admin "full control" path.
+    if not auto_generate:
+        manual = []
+        if admin_events:
+            for ev in admin_events:
+                manual.append({
+                    "name": ev.get('event_name', 'Admin Event'),
+                    "type": ev.get('event_type', 'fixed'),
+                    "description": ev.get('description', ''),
+                    "impact_target": ev.get('impact_target', 'cash'),
+                    "value": float(ev.get('value', 0)),
+                    "severity": "admin",
+                    "category": "admin",
+                })
+        return manual
+
     rng = _seeded_random(user_id, month, "events")
     events = []
     risk_level = _calculate_risk_level(player)

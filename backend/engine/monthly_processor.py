@@ -41,7 +41,9 @@ from engine.scoring import calculate_financial_health_score, update_discipline_a
 def process_month_for_player(player: dict, month: int,
                               admin_events: list = None,
                               active_loans: list = None,
-                              pending_sales: list = None) -> dict:
+                              pending_sales: list = None,
+                              auto_events: bool = True,
+                              auto_market: bool = True) -> dict:
     """
     Process a single month for a single player.
     
@@ -124,7 +126,7 @@ def process_month_for_player(player: dict, month: int,
     # ════════════════════════════════════════════
     # STEP 4: INVESTMENT GROWTH
     # ════════════════════════════════════════════
-    growth = calculate_investment_growth(player, month)
+    growth = calculate_investment_growth(player, month, auto_market)
     stocks = growth['stocks']
     gold = growth['gold']
     emergency_fund = growth['emergency_fund']
@@ -137,7 +139,7 @@ def process_month_for_player(player: dict, month: int,
     # Build a temporary player state for event generation with current trust
     temp_player = {**player, 'cash': cash, 'stocks': stocks, 'gold': gold,
                    'emergency_fund': emergency_fund, 'trust_score': trust_score}
-    events = generate_events_for_player(temp_player, month, admin_events)
+    events = generate_events_for_player(temp_player, month, admin_events, auto_events)
     events_triggered = events
 
     for event in events:

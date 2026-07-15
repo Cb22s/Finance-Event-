@@ -69,6 +69,8 @@ def next_month():
         return jsonify({"error": "Game control not found."}), 500
 
     curr_m = game['current_month']
+    auto_events = bool(game.get('auto_events', False))
+    auto_market = bool(game.get('auto_market', False))
 
     # Race condition protection
     if exp_month is not None and int(exp_month) != curr_m:
@@ -117,7 +119,9 @@ def next_month():
             month=next_m,
             admin_events=admin_events,
             active_loans=active_loans,
-            pending_sales=pending_sales
+            pending_sales=pending_sales,
+            auto_events=auto_events,
+            auto_market=auto_market
         )
 
         # Collect batch data
@@ -426,6 +430,28 @@ def update_player():
         "risk_level": risk_level,
         "financial_health_score": score_result['score']
     })
+
+
+# --------------------------------------------------
+# GAME CONTROL SETTINGS - admin toggles the automatic layer.
+# auto_events  = engine invents random emergencies/opportunities each month.
+# auto_market  = stocks/gold move automatically each month.
+# Both default OFF (manual control); admin flips them here. Emergency-fund
+# interest and salary/expenses/loans are the fixed baseline, always on.
+# --------------------------------------------------
+@admin_bp.route('/admin/settings', methods=['POST'])
+@admin_required
+def update_settings():
+    data = request.json or {}
+    fields = {}
+    if 'auto_events' in data:
+        fields['auto_events'] = bool(data['auto_events'])
+    if 'auto_market' in data:
+        fields['auto_market'] = bool(data['auto_market'])
+    if not fields:
+        return jsonify({"error": "Nothing to update."}), 400
+    supabase.table('game_control').update(fields).eq('id', 1).execute()
+    return jsonify({"message": "Settings updated.", **fields})
 
 
 # --------------------------------------------------
