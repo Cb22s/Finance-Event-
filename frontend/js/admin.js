@@ -407,3 +407,83 @@ window.resetPlayer = async function (uid, name) {
     if (res.ok) { showToast('Player reset', 'success'); if (window._reloadPlayers) window._reloadPlayers(); }
     else showToast(data.error || 'Reset failed', 'error');
 };
+
+
+// Create a player login (username + password). Backend makes the auth user via
+// the service_role admin API; the player then logs in from the landing page.
+document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('createPlayerForm');
+    if (!form) return;
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const username = (document.getElementById('cpUsername').value || '').trim().toLowerCase();
+        const password = document.getElementById('cpPassword').value || '';
+        const name = (document.getElementById('cpName').value || '').trim();
+        if (!username || password.length < 6) {
+            showToast('Enter a username and a password of at least 6 characters.', 'error');
+            return;
+        }
+        const btn = form.querySelector('button[type="submit"]');
+        if (btn) btn.disabled = true;
+        try {
+            const res = await adminFetch(`${API_BASE_URL}/admin/create-player`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, name })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                showToast(data.message || 'Player created', 'success');
+                form.reset();
+                if (window._reloadPlayers) window._reloadPlayers();
+                if (window._reloadRoster) window._reloadRoster();
+            } else {
+                showToast(data.error || 'Create failed', 'error');
+            }
+        } catch (err) {
+            showToast(err.message || 'Create failed', 'error');
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    });
+});
+
+// Player roster - every provisioned login and whether they have started playing.
+document.addEventListener('DOMContentLoaded', () => {
+    const box = document.getElementById('rosterContainer');
+    if (!box) return;
+    async function loadRoster() {
+        try {
+            const res = await adminFetch(`${API_BASE_URL}/admin/roster`);
+            if (!res || !res.ok) return;
+            const data = await res.json();
+            const roster = data.roster || [];
+            if (!roster.length) {
+                box.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem; padding:1rem;">No players created yet. Use Create Player above.</p>';
+                return;
+            }
+            const rows = roster.map(p => {
+                const badge = p.played
+                    ? '<span style="color:var(--accent-emerald);">&#9679; Playing</span>'
+                    : '<span style="color:var(--accent-amber);">&#9676; Waiting</span>';
+                return `<tr>
+                    <td style="padding:0.5rem; font-weight:600;">${escapeHtml(p.username)}</td>
+                    <td style="padding:0.5rem;">${escapeHtml(p.name)}</td>
+                    <td style="padding:0.5rem;">${badge}</td>
+                </tr>`;
+            }).join('');
+            box.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">
+                <thead><tr style="color:var(--text-muted); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em;">
+                    <th style="text-align:left; padding:0.5rem;">Username</th>
+                    <th style="text-align:left; padding:0.5rem;">Name</th>
+                    <th style="text-align:left; padding:0.5rem;">Status</th>
+                </tr></thead><tbody>${rows}</tbody></table>`;
+        } catch (e) {
+            box.innerHTML = '<p style="color:var(--accent-rose); font-size:0.85rem; padding:1rem;">Failed to load roster.</p>';
+        }
+    }
+    window._reloadRoster = loadRoster;
+    const btn = document.getElementById('refreshRosterBtn');
+    if (btn) btn.addEventListener('click', loadRoster);
+    loadRoster();
+});

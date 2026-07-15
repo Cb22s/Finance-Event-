@@ -3,6 +3,7 @@
 # Uses the modular engine for all game logic.
 # =============================================================================
 
+import re
 from flask import Blueprint, request, jsonify
 from supabase_client import supabase
 from services.auth_service import admin_required
@@ -425,6 +426,76 @@ def update_player():
         "risk_level": risk_level,
         "financial_health_score": score_result['score']
     })
+
+
+# --------------------------------------------------
+# PLAYER ROSTER - every provisioned login, and whether they have started.
+# public.users has a row per created account (via the signup trigger). A
+# player only gets a player_state row once they do their month-1 allocation,
+# so "played" distinguishes started vs. waiting. Admins (public.admins) excluded.
+# --------------------------------------------------
+@admin_bp.route('/admin/roster', methods=['GET'])
+@admin_required
+def admin_roster():
+    users = supabase.table('users').select('id, name, email').execute().data or []
+    admin_rows = supabase.table('admins').select('user_id').execute().data or []
+    played_rows = supabase.table('player_state').select('user_id').execute().data or []
+    admin_ids = {r['user_id'] for r in admin_rows}
+    played_ids = {r['user_id'] for r in played_rows}
+    roster = []
+    for u in users:
+        if u['id'] in admin_ids:
+            continue
+        email = u.get('email') or ''
+        username = email.split('@')[0] if '@' in email else email
+        roster.append({
+            'user_id': u['id'],
+            'username': username,
+            'name': u.get('name') or username,
+            'played': u['id'] in played_ids,
+        })
+    roster.sort(key=lambda r: r['username'])
+    return jsonify({'roster': roster})
+
+
+# --------------------------------------------------
+# CREATE PLAYER - admin provisions a login (username + password).
+# Uses the service_role admin API to create the auth user; the
+# on_auth_user_created trigger then creates the public.users profile row.
+# Players log in with just a username; the real email is username@event.local.
+# --------------------------------------------------
+PLAYER_EMAIL_DOMAIN = 'event.local'
+_USERNAME_RE = re.compile(r'^[a-z0-9_.-]{3,32}$')
+
+
+@admin_bp.route('/admin/create-player', methods=['POST'])
+@admin_required
+def create_player():
+    data = request.json or {}
+    username = str(data.get('username', '')).strip().lower()
+    password = str(data.get('password', ''))
+    name = str(data.get('name', '')).strip() or username
+
+    if not _USERNAME_RE.match(username):
+        return jsonify({"error": "Username must be 3-32 chars: letters, numbers, . _ - only."}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters."}), 400
+
+    email = f"{username}@{PLAYER_EMAIL_DOMAIN}"
+    try:
+        supabase.auth.admin.create_user({
+            "email": email,
+            "password": password,
+            "email_confirm": True,
+            "user_metadata": {"name": name},
+        })
+    except Exception as e:
+        msg = str(e)
+        if 'already' in msg.lower() or 'registered' in msg.lower() or 'exists' in msg.lower():
+            return jsonify({"error": f"Username '{username}' already exists."}), 409
+        return jsonify({"error": f"Could not create player: {msg}"}), 500
+
+    return jsonify({"message": f"Player '{username}' created. They can log in now.", "username": username})
 
 
 @admin_bp.route('/admin/reset-player', methods=['POST'])

@@ -251,6 +251,51 @@
             </div>
         </div>
 
+        <!-- Create Player -->
+        <div class="glass-card" style="margin-top:1.25rem;">
+            <div class="section-header">
+                <div class="section-icon icon-primary"><i class="fa-solid fa-user-plus"></i></div>
+                <div>
+                    <div class="section-title">Create Player</div>
+                    <div class="section-subtitle">Add a player login. They sign in with the username + password you set here.</div>
+                </div>
+            </div>
+            <form id="createPlayerForm" style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:flex-end;">
+                <div style="flex:1; min-width:150px;">
+                    <label class="auth-label" style="font-size:0.72rem;">Username</label>
+                    <input id="cpUsername" type="text" class="input-glass" placeholder="e.g. player01" autocomplete="off" required>
+                </div>
+                <div style="flex:1; min-width:150px;">
+                    <label class="auth-label" style="font-size:0.72rem;">Password</label>
+                    <input id="cpPassword" type="text" class="input-glass" placeholder="min 6 characters" autocomplete="off" required>
+                </div>
+                <div style="flex:1; min-width:150px;">
+                    <label class="auth-label" style="font-size:0.72rem;">Display name <span style="opacity:0.6;">(optional)</span></label>
+                    <input id="cpName" type="text" class="input-glass" placeholder="e.g. Team Alpha" autocomplete="off">
+                </div>
+                <button type="submit" class="btn-glow" style="justify-content:center; padding:0.6rem 1.25rem;">
+                    <i class="fa-solid fa-plus"></i> Create
+                </button>
+            </form>
+        </div>
+
+        <!-- Player Roster -->
+        <div class="glass-card" style="margin-top:1.25rem;">
+            <div class="section-header">
+                <div class="section-icon icon-primary"><i class="fa-solid fa-clipboard-list"></i></div>
+                <div>
+                    <div class="section-title">Player Roster</div>
+                    <div class="section-subtitle">All provisioned logins. "Waiting" = created but hasn't started their allocation yet.</div>
+                </div>
+            </div>
+            <button class="btn-ghost" id="refreshRosterBtn" style="font-size:0.8rem; padding:0.4rem 1rem; margin-bottom:0.75rem;">
+                <i class="fa-solid fa-arrows-rotate"></i> Refresh
+            </button>
+            <div id="rosterContainer" style="overflow-x:auto;">
+                <div style="text-align:center; padding:2rem;"><div class="spinner-glass" style="margin:0 auto;"></div></div>
+            </div>
+        </div>
+
         <!-- Players Manager -->
         <div class="glass-card" style="margin-top:1.25rem;">
             <div class="section-header">

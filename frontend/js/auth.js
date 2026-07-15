@@ -56,10 +56,14 @@ document.addEventListener('DOMContentLoaded', () => {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearError();
-      const email = (emailEl.value || '').trim();
+      // Players log in with a plain username. Admin-created accounts use an
+      // internal email of <username>@event.local, so map it here. A full email
+      // typed by the operator is honoured as-is.
+      let email = (emailEl.value || '').trim().toLowerCase();
+      if (email && !email.includes('@')) email = email + '@event.local';
       const password = passEl.value || '';
       if (!email || password.length < 6) {
-        showError('Enter a valid email and a password of at least 6 characters.');
+        showError('Enter your username and a password of at least 6 characters.');
         return;
       }
       busy(true);
