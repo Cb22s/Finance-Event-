@@ -1,3 +1,9 @@
+-- #############################################################################
+-- ##  INCREMENTAL PATCH — NOT part of a fresh install (F-02).                 ##
+-- ##  Everything here is already in supabase.sql. Use ONLY to retrofit an     ##
+-- ##  older live project that predates the ADR-008/009 fixes. Idempotent.     ##
+-- #############################################################################
+
 -- =============================================================================
 -- FAIRNESS FIXES MIGRATION (ADR-008 + ADR-009, ratified 2026-07-11)
 -- Run this in the Supabase SQL editor BETWEEN games (never mid-game, ADR-012).

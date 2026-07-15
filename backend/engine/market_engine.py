@@ -28,11 +28,11 @@ def _seeded_rng(month: int) -> random.Random:
 def calculate_investment_growth(player: dict, month: int) -> dict:
     """
     Calculate monthly investment growth with volatility.
-    
+
     Stocks: Base growth + random volatility based on risk
     Gold: Stable growth with minor fluctuation
     Emergency Fund: Small savings interest
-    
+
     Returns updated values and log messages.
     """
     rng = _seeded_rng(month)  # global market path — identical for all players (ADR-009)
@@ -42,10 +42,24 @@ def calculate_investment_growth(player: dict, month: int) -> dict:
     emergency = float(player.get('emergency_fund', 0))
     logs = []
 
+    # ──── GLOBAL MARKET DRAWS (ADR-009 / QA-014 fairness fix) ────
+    # Draw BOTH market variables unconditionally, once, in this fixed order
+    # (stock volatility first, then gold fluctuation), so the shared per-month
+    # RNG stream advances identically for EVERY player regardless of which
+    # assets they hold. Previously these draws lived inside the `stocks > 0`
+    # and `gold > 0` guards below, so a player holding no stocks skipped the
+    # stock draw and their gold draw consumed the stream position a
+    # stock-holder's stock draw would occupy — two players with identical gold
+    # could receive different gold rates purely from portfolio composition,
+    # violating ADR-009 / SRS §5 Invariant 2 (market outcomes identical for
+    # all players in a month). The `> 0` guards below now gate only whether the
+    # drawn rate is APPLIED to a balance, never whether the value is drawn.
+    volatility = rng.uniform(STOCK_VOLATILITY_MIN, STOCK_VOLATILITY_MAX)
+    gold_fluctuation = rng.uniform(-0.02, 0.03)  # Small range
+
     # ──── STOCKS (Volatile) ────
     if stocks > 0:
         # Base growth + random volatility
-        volatility = rng.uniform(STOCK_VOLATILITY_MIN, STOCK_VOLATILITY_MAX)
         stock_growth_rate = STOCK_BASE_GROWTH + volatility
         stock_delta = stocks * stock_growth_rate
         stocks += stock_delta
@@ -55,7 +69,6 @@ def calculate_investment_growth(player: dict, month: int) -> dict:
 
     # ──── GOLD (Stable) ────
     if gold > 0:
-        gold_fluctuation = rng.uniform(-0.02, 0.03)  # Small range
         gold_growth_rate = GOLD_BASE_GROWTH + gold_fluctuation
         gold_delta = gold * gold_growth_rate
         gold += gold_delta
@@ -83,7 +96,7 @@ def calculate_inflation_adjustment(base_expense: float, month: int) -> float:
     """
     if month < INFLATION_START_MONTH:
         return base_expense
-    
+
     months_of_inflation = month - INFLATION_START_MONTH + 1
     inflation_multiplier = (1 + INFLATION_RATE_PER_MONTH) ** months_of_inflation
     return round(base_expense * inflation_multiplier, 2)

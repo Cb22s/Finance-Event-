@@ -1,3 +1,9 @@
+-- ############################################################################
+-- ##  INCREMENTAL PATCH — NOT part of a fresh install (F-02).                ##
+-- ##  supabase.sql already ships the SELECT-own-row policies. Use ONLY to    ##
+-- ##  retrofit an older live project that still has the FOR ALL policies.     ##
+-- ############################################################################
+
 -- ============================================================================
 -- SECURITY FIX — Lock down player financial tables (Row Level Security)
 -- Money Master — Financial Simulation Game

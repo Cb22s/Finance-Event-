@@ -1,3 +1,12 @@
+-- ############################################################################
+-- ##  NOT REQUIRED FOR A FRESH INSTALL (F-02).                               ##
+-- ##  The public.admins TABLE is now created by supabase.sql. A fresh        ##
+-- ##  install runs ONLY supabase.sql. This file is retained for two reasons: ##
+-- ##   (1) retrofitting an older live project that predates the fold-in;     ##
+-- ##   (2) the admin-GRANT data step below (insert a user into public.admins ##
+-- ##       to make them an admin) — that step is still needed post-install.  ##
+-- ############################################################################
+
 -- ============================================================================
 -- ADMIN ALLOWLIST — who is allowed into the admin panel
 -- Money Master — Financial Simulation Game

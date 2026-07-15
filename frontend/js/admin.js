@@ -2,6 +2,16 @@
 // ADMIN PANEL — Game control, event management, leaderboard
 // ============================================================================
 
+// Escape user-controlled strings before inserting into innerHTML. Player names
+// (public.users.name) are editable by the logged-in student via RLS, so they
+// must be treated as untrusted when rendered. Prevents stored XSS in the admin
+// standings. Security hardening only — legitimate names render identically.
+function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+}
+
 function showToast(message, type = 'info') {
     let container = document.getElementById('toastContainer');
     const toast = document.createElement('div');
@@ -221,7 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const trophies = ['🏆', '🥈', '🥉'];
             tbody.innerHTML = data.map((row, idx) => {
-                const name = row.users?.name || 'Anonymous';
+                const name = escapeHtml(row.users?.name || 'Anonymous');
                 const trophy = idx < 3 ? trophies[idx] + ' ' : '';
                 return `
                     <div class="lb-row">

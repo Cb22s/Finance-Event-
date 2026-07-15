@@ -1,3 +1,10 @@
+-- ############################################################################
+-- ##  NOT REQUIRED FOR A FRESH INSTALL (F-02).                               ##
+-- ##  public.player_month_actions is now created by supabase.sql. A fresh    ##
+-- ##  install runs ONLY supabase.sql. Retained only to retrofit an older     ##
+-- ##  live project that predates the fold-in. Safe (idempotent) if re-run.   ##
+-- ############################################################################
+
 -- ============================================================================
 -- IDEMPOTENCY MIGRATION
 -- Durable, per-(user, month) action guard for optional-choice purchases and

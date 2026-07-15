@@ -1,3 +1,22 @@
+-- ############################################################################
+-- ##  SUPERSEDED — DO NOT RUN.  Kept only for historical reference.          ##
+-- ##                                                                          ##
+-- ##  This file predates the current schema and will REGRESS a live project  ##
+-- ##  if run:                                                                 ##
+-- ##   1. It re-creates policy "Enable all for leaderboard read" ON           ##
+-- ##      player_state FOR SELECT USING (true) — re-opening the public-read   ##
+-- ##      hole that security_fix_rls.sql closes (any client could read every  ##
+-- ##      player's full financial row via the anon key). Fairness/privacy     ##
+-- ##      regression.                                                         ##
+-- ##   2. Its process_month_atomically body OMITS discipline_score and        ##
+-- ##      financial_health_score persistence (pre-ADR-008) — running it last  ##
+-- ##      silently FREEZES the leaderboard score.                             ##
+-- ##                                                                          ##
+-- ##  Canonical fresh-install set is the four files in DEPLOY_FRESH.md §2:    ##
+-- ##  supabase.sql -> supabase_signup_trigger.sql -> admin_setup.sql ->       ##
+-- ##  idempotency_migration.sql. See QA_REPORT_V1.md F-04.                    ##
+-- ############################################################################
+
 -- ============================================================================
 -- MIGRATION: Add trust_score and risk_level to player_state
 -- Run this if you already have the old schema deployed.

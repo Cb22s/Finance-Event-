@@ -136,40 +136,18 @@ def generate_events_for_player(player: dict, month: int, admin_events: list = No
         })
 
     # ──────────────────────────────────────────────
-    # 3. MARKET FLUCTUATION — GLOBAL (ADR-009)
-    # Markets are shared reality: seeded by month only, so every player
-    # sees the identical market event in the same month. Personal events
-    # (emergency, opportunity, social) stay per-player because their
-    # probabilities are driven by the player's own state — consequences
-    # of choices, not luck.
+    # 3. MARKET FLUCTUATION — REMOVED (QA-002)
+    # This category used to roll a second, independently-seeded global
+    # stock/gold swing (-12%..+15% stocks, -3%..+5% gold) on top of the
+    # returns market_engine.calculate_investment_growth already applies
+    # every month under ADR-009. Both paths were globally seeded (so this
+    # was never a fairness bug — every player got the same double hit), but
+    # it silently doubled effective volatility beyond the range documented
+    # in PRD §5 and produced two redundant "market moved" log lines in the
+    # same month. market_engine.py is the single canonical ADR-009 global
+    # market path; this duplicate category was removed rather than fixed in
+    # place. See QA_REPORT_V1.md QA-002.
     # ──────────────────────────────────────────────
-    market_rng = _seeded_random("GLOBAL", month, "market_events")
-    if market_rng.random() < EVENT_BASE_PROBABILITIES["market_fluctuation"]:
-        # Stock markets are volatile
-        stock_change = market_rng.uniform(-12, 15)  # -12% to +15%
-        direction = "rose" if stock_change > 0 else "dropped"
-        events.append({
-            "name": f"Market {direction.title()}",
-            "type": "percentage",
-            "description": f"Stock markets {direction} by {abs(stock_change):.1f}% this month.",
-            "impact_target": "stocks",
-            "value": round(stock_change, 2),
-            "severity": "positive" if stock_change > 0 else "negative",
-            "category": "market"
-        })
-
-        # Gold is more stable but occasionally moves
-        if market_rng.random() < 0.3:
-            gold_change = market_rng.uniform(-3, 5)
-            events.append({
-                "name": "Gold Price Movement",
-                "type": "percentage",
-                "description": f"Gold prices shifted by {gold_change:+.1f}% this month.",
-                "impact_target": "gold",
-                "value": round(gold_change, 2),
-                "severity": "positive" if gold_change > 0 else "negative",
-                "category": "market"
-            })
 
     # ──────────────────────────────────────────────
     # 4. SOCIAL RESPONSIBILITY EVENT

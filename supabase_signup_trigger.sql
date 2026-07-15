@@ -1,3 +1,10 @@
+-- ############################################################################
+-- ##  NOT REQUIRED FOR A FRESH INSTALL (F-02).                               ##
+-- ##  The handle_new_user() function and on_auth_user_created trigger are    ##
+-- ##  now created by supabase.sql. A fresh install runs ONLY supabase.sql.   ##
+-- ##  Retained only to retrofit an older live project. Idempotent if re-run. ##
+-- ############################################################################
+
 -- ============================================================================
 -- SIGNUP TRIGGER — auto-create a public.users row when someone signs up
 -- Money Master — Financial Simulation Game

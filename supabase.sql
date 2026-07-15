@@ -284,3 +284,163 @@ EXCEPTION
         RAISE;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- SECURITY (QA-001): this SECURITY DEFINER function mutates every player's
+-- financial state and advances the game month, with no internal admin check
+-- of its own — it relies entirely on only being callable by the trusted
+-- Flask backend (service_role). Without this revoke, Postgres' default
+-- EXECUTE-to-PUBLIC grant lets PostgREST expose it to anon/authenticated at
+-- /rest/v1/rpc/process_month_atomically, bypassing admin_required entirely.
+-- See security_fix_rpc_grants.sql for the standalone fix on existing projects.
+REVOKE EXECUTE ON FUNCTION public.process_month_atomically(json, json, json, json, integer) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.process_month_atomically(json, json, json, json, integer) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.process_month_atomically(json, json, json, json, integer) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.process_month_atomically(json, json, json, json, integer) TO service_role;
+
+-- ============================================================================
+-- ATOMIC SELL RPC (QA-003)
+-- Locks the player row and performs check-decrement-credit as one atomic
+-- unit, closing the read-then-write race in the old /sell implementation.
+-- See sell_asset_atomic_migration.sql for the standalone fix on existing projects.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.sell_asset_atomic(
+    p_user_id UUID,
+    p_asset_type TEXT,
+    p_amount NUMERIC,
+    p_month INT,
+    p_penalty_rate NUMERIC
+) RETURNS JSON AS $$
+DECLARE
+    v_current NUMERIC;
+    v_new_val NUMERIC;
+    v_penalty NUMERIC;
+    v_receive NUMERIC;
+BEGIN
+    IF p_asset_type NOT IN ('stocks', 'gold', 'emergency_fund') THEN
+        RAISE EXCEPTION 'Invalid asset type: %', p_asset_type;
+    END IF;
+    IF p_amount IS NULL OR p_amount <= 0 THEN
+        RAISE EXCEPTION 'Amount must be positive';
+    END IF;
+
+    PERFORM 1 FROM public.player_state WHERE user_id = p_user_id FOR UPDATE;
+
+    EXECUTE format('SELECT %I FROM public.player_state WHERE user_id = $1', p_asset_type)
+        INTO v_current USING p_user_id;
+
+    IF v_current IS NULL THEN
+        RAISE EXCEPTION 'Player not found';
+    END IF;
+
+    IF v_current < p_amount THEN
+        RAISE EXCEPTION 'Insufficient % balance', p_asset_type;
+    END IF;
+
+    v_new_val := v_current - p_amount;
+    v_penalty := p_amount * p_penalty_rate;
+    v_receive := p_amount - v_penalty;
+
+    EXECUTE format('UPDATE public.player_state SET %I = $1 WHERE user_id = $2', p_asset_type)
+        USING v_new_val, p_user_id;
+
+    INSERT INTO public.player_sales (
+        user_id, asset_type, amount_sold, penalty, cash_to_receive, month_sold_in, month_to_credit
+    ) VALUES (
+        p_user_id, p_asset_type, p_amount, v_penalty, v_receive, p_month, p_month + 1
+    );
+
+    RETURN json_build_object(
+        'new_balance', v_new_val,
+        'penalty', v_penalty,
+        'cash_to_receive', v_receive
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+REVOKE EXECUTE ON FUNCTION public.sell_asset_atomic(UUID, TEXT, NUMERIC, INT, NUMERIC) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.sell_asset_atomic(UUID, TEXT, NUMERIC, INT, NUMERIC) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.sell_asset_atomic(UUID, TEXT, NUMERIC, INT, NUMERIC) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.sell_asset_atomic(UUID, TEXT, NUMERIC, INT, NUMERIC) TO service_role;
+
+-- ============================================================================
+-- COMPLETENESS (F-02): objects the backend depends on that used to live in
+-- separate SQL files. Folded in here so a FRESH INSTALL IS THIS ONE FILE, with
+-- no missing files or hidden manual steps. All statements are idempotent.
+-- The standalone files (admin_setup.sql, idempotency_migration.sql,
+-- supabase_signup_trigger.sql) are retained ONLY for retrofitting an older
+-- live project and for the admin-granting data step; they are NOT needed for a
+-- fresh install. See DEPLOY_FRESH.md §2.
+-- ============================================================================
+
+-- ──── Admin allowlist (server-only; gates every admin route) ────
+-- RLS ON with NO policies => anon/authenticated clients are fully denied; only
+-- the Flask backend (service_role key) can read it, which is who checks admin.
+CREATE TABLE IF NOT EXISTS public.admins (
+    user_id    UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.admins ENABLE ROW LEVEL SECURITY;
+-- (Grant a specific person admin AFTER install — see DEPLOY_FRESH.md §4a /
+--  admin_setup.sql: insert their auth.users.id into public.admins.)
+
+-- ──── Per-(user, month) action idempotency guard ────
+-- Backs buy-choice / relative-help claims (game_service.mark_action). Without
+-- this table those actions silently fail. RLS ON, no client policy (server-only).
+CREATE TABLE IF NOT EXISTS public.player_month_actions (
+    user_id     UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    month       INTEGER NOT NULL,
+    action_key  TEXT NOT NULL,   -- e.g. 'choice:12' or 'relative:parent'
+    created_at  TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    PRIMARY KEY (user_id, month, action_key)
+);
+ALTER TABLE public.player_month_actions ENABLE ROW LEVEL SECURITY;
+
+-- ──── Signup trigger: auto-create a public.users row on account creation ────
+-- public.player_state.user_id REFERENCES public.users(id); nothing in the Flask
+-- backend inserts into public.users, so without this trigger the first
+-- /allocate call FK-fails. SECURITY DEFINER so it can write public.users.
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+    INSERT INTO public.users (id, email, name)
+    VALUES (
+        new.id,
+        new.email,
+        COALESCE(
+            new.raw_user_meta_data->>'name',
+            new.raw_user_meta_data->>'full_name',
+            split_part(new.email, '@', 1)
+        )
+    )
+    ON CONFLICT (id) DO NOTHING;   -- never clobber an existing profile
+    RETURN new;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- Backfill profiles for any auth users that already exist (harmless on a truly
+-- fresh project; useful if test users were created before this ran).
+INSERT INTO public.users (id, email, name)
+SELECT u.id, u.email,
+       COALESCE(u.raw_user_meta_data->>'name',
+                u.raw_user_meta_data->>'full_name',
+                split_part(u.email, '@', 1))
+FROM auth.users u
+ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================================
+-- FRESH INSTALL COMPLETE. Running this single file on an empty Supabase project
+-- creates every table, RPC, function, trigger, RLS policy, and grant the
+-- backend requires. The only post-install step is granting a specific admin
+-- (data, not schema) — see DEPLOY_FRESH.md §4a.
+-- ============================================================================

@@ -115,8 +115,10 @@ def process_month_for_player(player: dict, month: int,
         event_log.append(f"🏠 Living expenses: -₹{adjusted_expense:,.0f}")
 
     # ════════════════════════════════════════════
-    # STEP 3: HANDLE PENDING ASSET SALE CREDITS
-    # (This is handled in the route by querying player_sales)
+    # STEP 3: PENDING ASSET SALE CREDITS
+    # (Already credited in STEP 0 above — the route passes pending_sales to the
+    #  engine, which applies them before salary/expenses. This header is kept
+    #  only to preserve the documented step numbering.)
     # ════════════════════════════════════════════
 
     # ════════════════════════════════════════════

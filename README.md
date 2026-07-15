@@ -27,7 +27,7 @@ financial event/
 │       └── game_service.py       ← DB helpers, leaderboard, rate limiting
 │
 ├── frontend/
-│   ├── index.html                ← Login (Google OAuth)
+│   ├── index.html                ← Login (email + password; signup disabled)
 │   ├── case-study.html           ← Scenario briefing
 │   ├── allocation.html           ← Month 1 budget allocation
 │   ├── dashboard.html            ← Main game dashboard
@@ -36,14 +36,15 @@ financial event/
 │   ├── css/style.css             ← Premium design system
 │   └── js/
 │       ├── config.js             ← Supabase client + API_BASE_URL
-│       ├── auth.js               ← Google OAuth login
+│       ├── auth.js               ← Email + password login (Supabase Auth)
 │       ├── case-study.js
 │       ├── allocation.js
 │       ├── dashboard.js          ← Main game logic (calls /sell, /buy-choice, /handle-relative)
 │       └── admin.js
 │
-├── supabase.sql                  ← Full schema (fresh install)
-└── supabase_migration.sql        ← Migration (adds trust_score, risk_level, new RPC)
+└── supabase.sql                  ← COMPLETE fresh install (one file: all tables,
+                                     RLS, RPCs, signup trigger, admin + idempotency)
+   (other *.sql files are retrofit-only patches / supabase_migration.sql is SUPERSEDED)
 ```
 
 ---
@@ -80,7 +81,7 @@ Login → Case Study → Month 1 Allocation → Dashboard ← → Admin: Next Mo
 | POST | `/sell` | Sell stocks/gold/emergency_fund (10% penalty) |
 | POST | `/buy-choice` | Purchase optional admin-created choice |
 | POST | `/handle-relative` | Donate to relative (trust system) |
-| GET | `/leaderboard` | Rankings by net worth |
+| GET | `/leaderboard` | Rankings by Financial Health Score (net-worth tiebreak) |
 | GET | `/event-history` | Full event log for player |
 
 ### Admin Routes
@@ -118,14 +119,19 @@ Event categories:
 
 ## 🗄️ Database Setup
 
-### Fresh Install
-Run `supabase.sql` in Supabase SQL Editor.
+### Fresh Install — one file
+Run **`supabase.sql`** in the Supabase SQL Editor. That is the complete install:
+all tables (including `admins` and `player_month_actions`), RLS policies, the
+`process_month_atomically` and `sell_asset_atomic` RPCs (locked to
+`service_role`), and the signup trigger. The only post-install step is granting a
+specific admin (see `DEPLOY_FRESH.md` §4a). Full walkthrough: `DEPLOY_FRESH.md`.
 
-### Existing Database Migration
-Run `supabase_migration.sql` to:
-- Add `trust_score` column to `player_state`
-- Add `risk_level` column to `player_state`
-- Replace the `process_month_atomically` RPC with the updated version
+> ⚠️ Do **not** run any other `*.sql` file for a fresh install — they are all
+> already folded into `supabase.sql` (each carries a header saying so) and are
+> kept only to retrofit an older live project. In particular
+> `supabase_migration.sql` is **superseded — do not run it** (it re-opens a
+> public read policy on `player_state` and reverts the scoring RPC). See
+> `QA_REPORT_V1.md` F-02/F-04.
 
 ---
 

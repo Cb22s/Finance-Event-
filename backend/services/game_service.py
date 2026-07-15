@@ -138,11 +138,35 @@ def action_done(user_id: str, month: int, action_key: str) -> bool:
     return bool(res.data)
 
 
+def _is_unique_violation(exc: Exception) -> bool:
+    """
+    True only if `exc` is a Postgres unique-violation (duplicate primary key),
+    i.e. this exact (user, month, action_key) was already claimed — as opposed
+    to any other failure (missing table, transient network/DB error, denied
+    permission). Robust across supabase-py/postgrest versions: some expose a
+    `.code` attribute, others fold the SQLSTATE into the error message/dict.
+    """
+    code = getattr(exc, 'code', None)
+    if code == '23505':
+        return True
+    text = (str(getattr(exc, 'message', '') or '') + ' ' + str(exc)).lower()
+    return '23505' in text or 'duplicate key' in text or 'already exists' in text
+
+
 def mark_action(user_id: str, month: int, action_key: str) -> bool:
     """
-    Record the action. Returns False if it was already recorded (the PRIMARY
-    KEY makes the insert fail), giving an atomic 'claim' that closes the
+    Atomically CLAIM an action. Returns True if this call recorded it, False
+    ONLY if it was already recorded — the PRIMARY KEY makes a duplicate insert
+    raise a unique-violation, which is the atomic claim that closes the
     check-then-act race between concurrent requests.
+
+    Any OTHER failure (missing `player_month_actions` table, transient DB/network
+    error, permissions) is re-raised rather than swallowed. Previously every
+    exception returned False, so a real outage was silently reported to the
+    player as "you already did this", and a fresh deploy that forgot
+    `idempotency_migration.sql` would permanently block EVERY buy-choice /
+    relative-help with no error surfaced anywhere (see QA_REPORT_V1 F-03/F-02).
+    Failing loud on non-duplicate errors makes that misconfiguration diagnosable.
     """
     try:
         supabase.table('player_month_actions').insert({
@@ -151,8 +175,10 @@ def mark_action(user_id: str, month: int, action_key: str) -> bool:
             'action_key': action_key
         }).execute()
         return True
-    except Exception:
-        return False
+    except Exception as e:
+        if _is_unique_violation(e):
+            return False
+        raise
 
 
 # Backwards-compatible wrappers for optional-choice purchases.

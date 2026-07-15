@@ -238,23 +238,26 @@ def sell_asset():
         # Allow but warn
         pass
 
-    penalty = amount_to_sell * SELL_PENALTY_RATE
-    receive_val = amount_to_sell - penalty
+    # QA-003 fix: the balance check above is a friendly pre-check only — the
+    # actual decrement + credit-row insert is done atomically in the DB via
+    # sell_asset_atomic (locks the player row, re-checks the balance under
+    # that lock). This closes a race where two concurrent identical sell
+    # requests could both pass the stale Python-side check above and both
+    # insert a player_sales row, crediting cash twice for one sale.
+    try:
+        result = supabase.rpc('sell_asset_atomic', {
+            "p_user_id": user_id,
+            "p_asset_type": asset_type,
+            "p_amount": amount_to_sell,
+            "p_month": player['month'],
+            "p_penalty_rate": SELL_PENALTY_RATE
+        }).execute()
+    except Exception as e:
+        return jsonify({"error": f"Sale failed: {e}"}), 400
 
-    new_val = current_val - amount_to_sell
-    supabase.table('player_state').update({
-        asset_type: new_val
-    }).eq('user_id', user_id).execute()
-
-    supabase.table('player_sales').insert({
-        "user_id": user_id,
-        "asset_type": asset_type,
-        "amount_sold": amount_to_sell,
-        "penalty": penalty,
-        "cash_to_receive": receive_val,
-        "month_sold_in": player['month'],
-        "month_to_credit": player['month'] + 1
-    }).execute()
+    data = result.data or {}
+    penalty = float(data.get('penalty', amount_to_sell * SELL_PENALTY_RATE))
+    receive_val = float(data.get('cash_to_receive', amount_to_sell - penalty))
 
     return jsonify({
         "message": f"Sold ₹{amount_to_sell:,.0f} of {asset_type}. After {SELL_PENALTY_RATE*100:.0f}% penalty, ₹{receive_val:,.0f} will be credited next month.",

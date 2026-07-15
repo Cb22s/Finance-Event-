@@ -20,6 +20,11 @@ env/
 backend/.env
 .env
 
+# Stray/deprecated backend copy inside the deployable frontend tree (F-05).
+# Must be deleted from the repo; ignored here so it can never ship a secret
+# via a Netlify folder-drag deploy of frontend/.
+frontend/backend/
+
 # IDE
 .vscode/
 .idea/

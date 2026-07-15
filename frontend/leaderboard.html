@@ -155,6 +155,15 @@
                 return `<span style="color:var(--accent-emerald)">${l}</span>`;
             }
 
+            // Escape user-controlled strings before innerHTML. Player names
+            // (public.users.name) are editable by the student via RLS → treat as
+            // untrusted. Prevents stored XSS on the public leaderboard.
+            function escapeHtml(value) {
+                return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => (
+                    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+                ));
+            }
+
             async function fetchLeaderboard() {
                 try {
                     // Game status
@@ -197,7 +206,7 @@
                             podiumHTML += `
                                 <div class="podium-card podium-${idx + 1}">
                                     <div class="podium-rank">${trophies[idx]}</div>
-                                    <div class="podium-name">${p.users?.name || 'Anonymous'}</div>
+                                    <div class="podium-name">${escapeHtml(p.users?.name || 'Anonymous')}</div>
                                     <div class="podium-worth">${(p.financial_health_score ?? 0).toFixed(1)} pts</div>
                                     <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.25rem;">
                                         ${formatINR(p.net_worth)} • Trust ${p.trust_score || 0} • Risk ${p.risk_level || 50}
@@ -216,7 +225,7 @@
                         restList.innerHTML = rest.map((p, i) => `
                             <div class="rest-row">
                                 <span class="rank-num">${i + 4}</span>
-                                <span class="player-name">${p.users?.name || 'Anonymous'}</span>
+                                <span class="player-name">${escapeHtml(p.users?.name || 'Anonymous')}</span>
                                 <span class="stat-chip" style="color: var(--accent-amber); font-weight: 600;">${(p.financial_health_score ?? 0).toFixed(1)} pts</span>
                                 <span class="stat-chip" style="color: var(--accent-emerald);">${formatINR(p.net_worth)}</span>
                                 <span class="stat-chip" style="color: var(--accent-cyan);">${p.trust_score || 0}</span>

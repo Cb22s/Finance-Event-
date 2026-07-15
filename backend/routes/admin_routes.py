@@ -11,7 +11,9 @@ from services.game_service import (
     get_admin_events_for_month, get_pending_sales, validate_rpc_payload
 )
 from engine.monthly_processor import process_month_for_player
-from models.constants import TOTAL_MONTHS
+from engine.market_engine import calculate_risk_score
+from engine.scoring import calculate_financial_health_score
+from models.constants import TOTAL_MONTHS, LIFESTYLE_COSTS
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -197,13 +199,51 @@ def end_game():
 # ──────────────────────────────────────────────
 # EVENT MANAGEMENT
 # ──────────────────────────────────────────────
+# QA-005: event_engine.apply_event_to_state only understands these
+# type/target combinations — anything else silently no-ops (the engine
+# just doesn't match a branch), so an admin typo previously vanished with
+# no error. Validating here surfaces the mistake immediately instead.
+_EVENT_TYPES = {'fixed', 'percentage'}
+_EVENT_TARGETS = {'cash', 'stocks', 'gold', 'expense_increase'}
+_PERCENTAGE_TARGETS = {'cash', 'stocks', 'gold'}  # expense_increase is fixed-only in the engine
+
+
 @admin_bp.route('/event', methods=['POST'])
 @admin_required
 def add_event():
     data = request.json
     if not data:
         return jsonify({"error": "No data provided."}), 400
-    supabase.table('events').insert(data).execute()
+
+    try:
+        month = int(data.get('month'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "month is required and must be an integer."}), 400
+
+    event_type = data.get('event_type')
+    if event_type not in _EVENT_TYPES:
+        return jsonify({"error": f"event_type must be one of {sorted(_EVENT_TYPES)}."}), 400
+
+    impact_target = data.get('impact_target')
+    if impact_target not in _EVENT_TARGETS:
+        return jsonify({"error": f"impact_target must be one of {sorted(_EVENT_TARGETS)}."}), 400
+    if event_type == 'percentage' and impact_target not in _PERCENTAGE_TARGETS:
+        return jsonify({"error": "expense_increase is only valid for event_type 'fixed'."}), 400
+
+    try:
+        value = float(data.get('value'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "value is required and must be a number."}), 400
+
+    record = {
+        "month": month,
+        "event_name": data.get('event_name', 'Admin Event'),
+        "event_type": event_type,
+        "impact_target": impact_target,
+        "value": value,
+        "description": data.get('description', '')
+    }
+    supabase.table('events').insert(record).execute()
     return jsonify({"message": "Global event added successfully."})
 
 
@@ -217,13 +257,60 @@ def del_event(id):
 # ──────────────────────────────────────────────
 # OPTIONAL CHOICE MANAGEMENT
 # ──────────────────────────────────────────────
+# QA-005: this is a financial mutation path — choice_service.execute_choice
+# deducts `cost` and grants `reward_value` against these rows every time a
+# player buys the choice. An unvalidated negative cost would pay players to
+# "buy" it; an out-of-range probability would break fair_roll's semantics.
+_REWARD_TYPES = {'cash', 'stocks', 'gold', 'emergency_fund'}
+
+
 @admin_bp.route('/choice-admin', methods=['POST'])
 @admin_required
 def add_choice():
     data = request.json
     if not data:
         return jsonify({"error": "No data provided."}), 400
-    supabase.table('optional_choices').insert(data).execute()
+
+    try:
+        month = int(data.get('month'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "month is required and must be an integer."}), 400
+
+    try:
+        cost = float(data.get('cost'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "cost is required and must be a number."}), 400
+    if cost < 0:
+        return jsonify({"error": "cost cannot be negative."}), 400
+
+    reward_type = data.get('reward_type')
+    if reward_type not in _REWARD_TYPES:
+        return jsonify({"error": f"reward_type must be one of {sorted(_REWARD_TYPES)}."}), 400
+
+    try:
+        reward_value = float(data.get('reward_value'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "reward_value is required and must be a number."}), 400
+    if reward_value < 0:
+        return jsonify({"error": "reward_value cannot be negative."}), 400
+
+    try:
+        probability = int(data.get('probability'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "probability is required and must be an integer 0-100."}), 400
+    if not (0 <= probability <= 100):
+        return jsonify({"error": "probability must be between 0 and 100."}), 400
+
+    record = {
+        "month": month,
+        "name": data.get('name', 'Optional Choice'),
+        "cost": cost,
+        "risk_type": data.get('risk_type', ''),
+        "reward_type": reward_type,
+        "reward_value": reward_value,
+        "probability": probability
+    }
+    supabase.table('optional_choices').insert(record).execute()
     return jsonify({"message": "Optional choice added for players."})
 
 
@@ -290,6 +377,34 @@ def update_player():
                  + float(merged['emergency_fund']) - float(merged['loans']))
     fields['net_worth'] = net_worth
 
+    # QA-004 fix: net worth was already recomputed above, but the leaderboard
+    # actually ranks by financial_health_score (ADR-008), and risk_level feeds
+    # its risk_protection component. Both were previously left stale after a
+    # correction, so a fixed data-entry mistake could still show a wrong rank
+    # until the next month reprocessed it. Recompute both the same way
+    # allocate_month1 does — discipline_score is left untouched (a correction
+    # fixes financial figures, not the player's discipline history).
+    risk_state = {
+        "cash": float(merged['cash']), "stocks": float(merged['stocks']),
+        "gold": float(merged['gold']), "emergency_fund": float(merged['emergency_fund']),
+        "loans": float(merged['loans'])
+    }
+    risk_level = calculate_risk_score(risk_state)
+    month = int(merged.get('month', 1) or 1)
+    lifestyle = merged.get('lifestyle_type') or 'city'
+    monthly_expense = LIFESTYLE_COSTS.get(lifestyle, LIFESTYLE_COSTS['city'])['total']
+    discipline_avg = float(merged.get('discipline_score', 100) or 100)
+    total_assets = (risk_state['cash'] + risk_state['stocks']
+                     + risk_state['gold'] + risk_state['emergency_fund'])
+    score_result = calculate_financial_health_score(
+        net_worth=net_worth, month=month,
+        emergency_fund=risk_state['emergency_fund'], monthly_expense=monthly_expense,
+        loans=risk_state['loans'], total_assets=total_assets,
+        risk_score=risk_level, discipline_avg=discipline_avg
+    )
+    fields['risk_level'] = risk_level
+    fields['financial_health_score'] = score_result['score']
+
     try:
         supabase.table('player_state').update(fields).eq('user_id', uid).execute()
         # Audit trail — records the correction without touching prior month logs.
@@ -304,7 +419,12 @@ def update_player():
     except Exception as e:
         return jsonify({"error": f"Update failed: {e}"}), 500
 
-    return jsonify({"message": "Player updated.", "net_worth": net_worth})
+    return jsonify({
+        "message": "Player updated.",
+        "net_worth": net_worth,
+        "risk_level": risk_level,
+        "financial_health_score": score_result['score']
+    })
 
 
 @admin_bp.route('/admin/reset-player', methods=['POST'])
