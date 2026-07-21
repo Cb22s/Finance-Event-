@@ -12,7 +12,7 @@ from services.game_service import (
 )
 from models.constants import (
     INITIAL_BUDGET, SELL_PENALTY_RATE, TRUST_HELP_AMOUNTS, TRUST_SCORE_GAIN,
-    LIFESTYLE_COSTS
+    LIFESTYLE_COSTS, ARCHETYPES, WEDDING_COST, SPOUSE_BASE_EXPENSE, MARRIAGE_MONTH
 )
 from engine.scoring import calculate_financial_health_score
 from engine.market_engine import calculate_risk_score
@@ -177,12 +177,34 @@ def get_dashboard():
     trust_scores = get_trust_scores(user_id)
     event_logs = get_all_event_logs(user_id)
 
+    # ── Courtship & Spouse metadata ──
+    revealed_rows = supabase.table('player_spouse_reveals').select('*').eq('user_id', user_id).execute().data or []
+    
+    spouse_options = []
+    for arch_id, data in ARCHETYPES.items():
+        spouse_options.append({
+            "id": arch_id,
+            "name": data["name"],
+            "description": data["description"]
+        })
+        
+    courtship = {
+        "marriage_month": MARRIAGE_MONTH,
+        "wedding_cost": WEDDING_COST,
+        "spouse_base_expense": SPOUSE_BASE_EXPENSE,
+        "extra_date_cost": 5000,
+        "spouse_options": spouse_options,
+        "reveals": revealed_rows,
+        "dates_used": len(revealed_rows)
+    }
+
     return jsonify({
         "player": player,
         "game": game,
         "choices": choices,
         "trust_scores": trust_scores,
-        "event_logs": event_logs
+        "event_logs": event_logs,
+        "courtship": courtship
     })
 
 
@@ -194,6 +216,16 @@ def lock_turn():
     user_id = get_user_id(request)
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
+
+    player = get_player(user_id)
+    if not player:
+        return jsonify({"error": "Player state not found"}), 404
+
+    # Guard: in Month 6, players must choose a spouse or single before locking
+    if player.get('month') == 6 and not player.get('spouse_archetype'):
+        game = get_game_state()
+        if game.get('marriage_round_active'):
+            return jsonify({"error": "You must choose to marry or stay single before completing Month 6."}), 400
 
     supabase.table('player_state').update({
         'status': 'waiting'
@@ -400,3 +432,223 @@ def event_history():
 
     logs = get_all_event_logs(user_id)
     return jsonify({"logs": logs})
+
+
+# ──────────────────────────────────────────────
+# COURTSHIP & MARRIAGE ENDPOINTS (ADR-002)
+# ──────────────────────────────────────────────
+
+@player_bp.route('/courtship/reveal', methods=['POST'])
+def courtship_reveal():
+    user_id = get_user_id(request)
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    player = get_player(user_id)
+    if not player:
+        return jsonify({"error": "Player state not found"}), 404
+
+    if player.get('status') == 'waiting':
+        return jsonify({"error": "Your turn is locked. Wait for next month."}), 400
+
+    game = get_game_state()
+    if player['month'] != 6 or not game.get('marriage_round_active'):
+        return jsonify({"error": "Courtship is only available when the marriage round is active in Month 6."}), 400
+
+    data = request.json or {}
+    archetype_id = data.get('archetype_id')
+    trait_key = data.get('trait_key')  # 'income', 'expense_mod', 'assets'
+
+    if archetype_id not in ARCHETYPES:
+        return jsonify({"error": "Invalid spouse archetype."}), 400
+    if trait_key not in ('income', 'expense_mod', 'assets'):
+        return jsonify({"error": "Invalid trait key. Must be income, expense_mod, or assets."}), 400
+
+    # Check if already revealed
+    existing = supabase.table('player_spouse_reveals').select('*').eq('user_id', user_id).eq('archetype_id', archetype_id).eq('trait_key', trait_key).execute()
+    if existing.data:
+        return jsonify({
+            "message": "Already revealed.",
+            "revealed_value": _get_revealed_value(archetype_id, trait_key)
+        })
+
+    # Count existing reveals to check cost
+    reveals = supabase.table('player_spouse_reveals').select('*').eq('user_id', user_id).execute().data or []
+    count = len(reveals)
+    cost = 0
+    if count >= 3:
+        cost = 5000
+        cash = float(player.get('cash', 0))
+        if cash < cost:
+            return jsonify({"error": f"Not enough cash for an extra date. Need ₹{cost:,}."}), 400
+        new_cash = cash - cost
+        supabase.table('player_state').update({'cash': new_cash}).eq('user_id', user_id).execute()
+        player['cash'] = new_cash
+
+    # Insert reveal record
+    supabase.table('player_spouse_reveals').insert({
+        'user_id': user_id,
+        'archetype_id': archetype_id,
+        'trait_key': trait_key
+    }).execute()
+
+    return jsonify({
+        "message": f"Successfully went on a date! Spent ₹{cost:,} cash.",
+        "cost": cost,
+        "revealed_value": _get_revealed_value(archetype_id, trait_key)
+    })
+
+
+def _get_revealed_value(archetype_id, trait_key):
+    arc = ARCHETYPES[archetype_id]
+    if trait_key == 'income':
+        return f"+₹{arc['income']:,}/mo"
+    elif trait_key == 'expense_mod':
+        net_expense = SPOUSE_BASE_EXPENSE + arc['expense_mod']
+        return f"₹{net_expense:+,}/mo (Base: ₹{SPOUSE_BASE_EXPENSE:,}, mod: {arc['expense_mod']:+,})"
+    elif trait_key == 'assets':
+        parts = []
+        if arc['stocks'] > 0:
+            parts.append(f"Stocks: ₹{arc['stocks']:,}")
+        if arc['gold'] > 0:
+            parts.append(f"Gold: ₹{arc['gold']:,}")
+        if arc['ef'] > 0:
+            parts.append(f"Emergency Fund: ₹{arc['ef']:,}")
+        if arc['loan'] > 0:
+            parts.append(f"Debt: ₹{arc['loan']:,}")
+        return " | ".join(parts) if parts else "Brings no assets/liabilities."
+
+
+@player_bp.route('/courtship/marry', methods=['POST'])
+def courtship_marry():
+    user_id = get_user_id(request)
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    player = get_player(user_id)
+    if not player:
+        return jsonify({"error": "Player state not found"}), 404
+
+    if player.get('status') == 'waiting':
+        return jsonify({"error": "Your turn is locked. Wait for next month."}), 400
+
+    game = get_game_state()
+    if player['month'] != 6 or not game.get('marriage_round_active'):
+        return jsonify({"error": "Marriage round is only available when active in Month 6."}), 400
+
+    if player.get('spouse_archetype'):
+        return jsonify({"error": "You have already made a marriage decision."}), 400
+
+    data = request.json or {}
+    choice = data.get('choice')
+
+    if choice != 'single' and choice not in ARCHETYPES:
+        return jsonify({"error": "Invalid selection."}), 400
+
+    cash = float(player.get('cash', 0))
+    stocks = float(player.get('stocks', 0))
+    gold = float(player.get('gold', 0))
+    ef = float(player.get('emergency_fund', 0))
+    loans = float(player.get('loans', 0))
+    discipline_avg = float(player.get('discipline_score', 100))
+
+    summary = ""
+    if choice == 'single':
+        summary = "💍 You chose to stay single and focus on your individual goals."
+        supabase.table('player_state').update({
+            'spouse_archetype': 'single'
+        }).eq('user_id', user_id).execute()
+        
+        supabase.table('player_month_log').insert({
+            "user_id": user_id,
+            "month": 6,
+            "starting_cash": cash,
+            "ending_cash": cash,
+            "net_worth": player.get('net_worth', 0),
+            "summary": summary
+        }).execute()
+        
+        return jsonify({"message": "You chose to stay single.", "spouse_archetype": "single"})
+
+    # Wedding cost deduction
+    if cash < WEDDING_COST:
+        return jsonify({"error": f"Insufficient cash for wedding. Need ₹{WEDDING_COST:,} but have ₹{cash:,.0f}."}), 400
+
+    arc = ARCHETYPES[choice]
+    cash -= WEDDING_COST
+    stocks += arc['stocks']
+    gold += arc['gold']
+    ef += arc['ef']
+    
+    # Handle spouse loan if any
+    if arc['loan'] > 0:
+        supabase.table('player_loans').insert({
+            'user_id': user_id,
+            'principal': arc['loan'],
+            'current_amount': arc['loan'],
+            'interest_rate': 0.12,
+            'month_taken': 6,
+            'status': 'active'
+        }).execute()
+        # Fetch updated total loans
+        loans = get_total_loans(user_id)
+
+    # Immediately apply Month 6 spouse income/expense
+    spouse_income = arc['income']
+    spouse_expense = SPOUSE_BASE_EXPENSE + arc['expense_mod']
+    net_spouse_flow = spouse_income - spouse_expense
+    cash += net_spouse_flow
+
+    # Recalculate net worth
+    net_worth = cash + stocks + gold + ef - loans
+
+    # Recalculate risk level
+    temp_state = {
+        'cash': cash, 'stocks': stocks, 'gold': gold,
+        'emergency_fund': ef, 'loans': loans
+    }
+    risk_level = calculate_risk_score(temp_state)
+
+    # Recalculate score
+    score_result = calculate_financial_health_score(
+        net_worth=net_worth, month=6,
+        emergency_fund=ef, monthly_expense=spouse_expense,
+        loans=loans, total_assets=cash + stocks + gold + ef,
+        risk_score=risk_level, discipline_avg=discipline_avg,
+        spouse_income=spouse_income
+    )
+
+    summary = (
+        f"💍 Married {arc['name']}! Paid ₹{WEDDING_COST:,} wedding cost. "
+        f"Spouse added assets (Stocks +₹{arc['stocks']:,}, Gold +₹{arc['gold']:,}, EF +₹{arc['ef']:,}). "
+        f"Month 6 spouse flow net: {net_spouse_flow:+,}."
+    )
+
+    updates = {
+        "spouse_archetype": choice,
+        "cash": round(cash, 2),
+        "stocks": round(stocks, 2),
+        "gold": round(gold, 2),
+        "emergency_fund": round(ef, 2),
+        "loans": round(loans, 2),
+        "net_worth": round(net_worth, 2),
+        "risk_level": risk_level,
+        "financial_health_score": score_result['score']
+    }
+
+    supabase.table('player_state').update(updates).eq('user_id', user_id).execute()
+
+    supabase.table('player_month_log').insert({
+        "user_id": user_id,
+        "month": 6,
+        "starting_cash": player['cash'],
+        "ending_cash": round(cash, 2),
+        "net_worth": round(net_worth, 2),
+        "summary": summary
+    }).execute()
+
+    return jsonify({
+        "message": f"Successfully married {arc['name']}!",
+        "spouse_archetype": choice,
+        "state": updates
+    })

@@ -7,7 +7,8 @@
 from models.constants import (
     MONTHLY_INCOME, LIFESTYLE_COSTS, BIKE_EMI,
     LOAN_INTEREST_RATE, LOAN_TERM_MONTHS,
-    INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH
+    INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH,
+    ARCHETYPES, SPOUSE_BASE_EXPENSE
 )
 
 
@@ -94,8 +95,18 @@ def process_month_for_player(player: dict, month: int,
     # ════════════════════════════════════════════
     # STEP 1: ADD MONTHLY INCOME
     # ════════════════════════════════════════════
-    cash += MONTHLY_INCOME
-    event_log.append(f"💰 Salary received: +₹{MONTHLY_INCOME:,}")
+    spouse_income = 0
+    spouse_arch_id = player.get('spouse_archetype')
+    if spouse_arch_id and spouse_arch_id != 'single':
+        arc = ARCHETYPES.get(spouse_arch_id)
+        if arc:
+            spouse_income = arc['income']
+
+    cash += MONTHLY_INCOME + spouse_income
+    if spouse_income > 0:
+        event_log.append(f"💰 Salary received: +₹{MONTHLY_INCOME:,} (Spouse: +₹{spouse_income:,})")
+    else:
+        event_log.append(f"💰 Salary received: +₹{MONTHLY_INCOME:,}")
 
     # ════════════════════════════════════════════
     # STEP 2: DEDUCT LIFESTYLE EXPENSES (with inflation)
@@ -110,11 +121,23 @@ def process_month_for_player(player: dict, month: int,
         adjusted_expense -= transport_saving
         event_log.append(f"🏍️ Bike saves ₹{transport_saving:,.0f} on transport")
 
-    cash -= adjusted_expense
+    spouse_expense = 0
+    if spouse_arch_id and spouse_arch_id != 'single':
+        arc = ARCHETYPES.get(spouse_arch_id)
+        if arc:
+            spouse_expense = SPOUSE_BASE_EXPENSE + arc['expense_mod']
+
+    total_expense = adjusted_expense + spouse_expense
+    cash -= total_expense
+    
+    exp_desc = f"₹{adjusted_expense:,.0f}"
     if month >= INFLATION_START_MONTH:
-        event_log.append(f"🏠 Living expenses: -₹{adjusted_expense:,.0f} (inflation-adjusted)")
+        exp_desc += " (inflation-adjusted)"
+        
+    if spouse_expense > 0:
+        event_log.append(f"🏠 Living expenses: -{exp_desc} (Spouse expenses: -₹{spouse_expense:,.0f})")
     else:
-        event_log.append(f"🏠 Living expenses: -₹{adjusted_expense:,.0f}")
+        event_log.append(f"🏠 Living expenses: -{exp_desc}")
 
     # ════════════════════════════════════════════
     # STEP 3: PENDING ASSET SALE CREDITS
@@ -253,11 +276,19 @@ def process_month_for_player(player: dict, month: int,
     prev_discipline = float(player.get('discipline_score', 100) or 100)
     discipline_avg = update_discipline_average(prev_discipline, month, month_discipline)
     total_assets = cash + stocks + gold + emergency_fund
+    
+    spouse_income = 0
+    if spouse_arch_id and spouse_arch_id != 'single':
+        arc = ARCHETYPES.get(spouse_arch_id)
+        if arc:
+            spouse_income = arc['income']
+
     score_result = calculate_financial_health_score(
         net_worth=net_worth, month=month,
         emergency_fund=emergency_fund, monthly_expense=adjusted_expense,
         loans=total_loan_outstanding, total_assets=total_assets,
-        risk_score=risk_level, discipline_avg=discipline_avg
+        risk_score=risk_level, discipline_avg=discipline_avg,
+        spouse_income=spouse_income
     )
     c = score_result['components']
     event_log.append(
@@ -286,6 +317,7 @@ def process_month_for_player(player: dict, month: int,
         "risk_level": risk_level,
         "discipline_score": discipline_avg,
         "financial_health_score": score_result['score'],
+        "spouse_archetype": spouse_arch_id,
         "status": "active"
     }
 

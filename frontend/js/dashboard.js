@@ -83,6 +83,30 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.location.href = '/';
     });
 
+    const staySingleBtn = document.getElementById('staySingleBtn');
+    if (staySingleBtn) {
+        staySingleBtn.addEventListener('click', async () => {
+            if (!confirm("Choose to stay single? This choice is final for this game.")) return;
+            try {
+                const h = await getAuthHeaders();
+                const res = await fetch(`${API_BASE_URL}/courtship/marry`, {
+                    method: 'POST',
+                    headers: h,
+                    body: JSON.stringify({ choice: 'single' })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(data.message, 'success');
+                    await loadDashboard();
+                } else {
+                    showToast(data.error, 'error');
+                }
+            } catch (err) {
+                showToast('Failed to stay single', 'error');
+            }
+        });
+    }
+
     document.getElementById('endTurnBtn').addEventListener('click', async () => {
         if (!confirm("Lock your turn for this month? You won't be able to make more decisions until the admin advances.")) return;
 
@@ -157,6 +181,25 @@ async function loadDashboard() {
         document.getElementById('bikeVal').innerText = p.bike_status
             ? (p.bike_lock_in_months > 0 ? `Locked (${p.bike_lock_in_months}m)` : 'Free')
             : 'None';
+        
+        const relVal = document.getElementById('relationshipVal');
+        if (relVal) {
+            if (p.spouse_archetype) {
+                if (p.spouse_archetype === 'single') {
+                    relVal.innerText = 'Single';
+                } else {
+                    const names = {
+                        saver: 'Saver',
+                        earner: 'Earner',
+                        investor: 'Investor',
+                        anchor: 'Anchor'
+                    };
+                    relVal.innerText = names[p.spouse_archetype] || p.spouse_archetype;
+                }
+            } else {
+                relVal.innerText = 'Unmarried';
+            }
+        }
 
         // Risk & Trust
         const riskLevel = p.risk_level || 50;
@@ -164,6 +207,82 @@ async function loadDashboard() {
         const riskColor = riskLevel > 70 ? 'var(--accent-rose)' : riskLevel > 40 ? 'var(--accent-amber)' : 'var(--accent-emerald)';
         document.getElementById('riskVal').innerHTML = `<span style="color:${riskColor}">${riskLabel} (${riskLevel})</span>`;
         document.getElementById('trustVal').innerText = p.trust_score || 0;
+
+        // ── Courtship & Marriage UI Render ──
+        const courtshipSec = document.getElementById('courtshipSection');
+        const courtship = data.courtship;
+        if (courtshipSec && courtship) {
+            if (p.month === 6 && g.marriage_round_active && !p.spouse_archetype) {
+                courtshipSec.style.display = 'block';
+                const datesUsed = courtship.dates_used || 0;
+                document.getElementById('datesUsedVal').innerText = datesUsed;
+                
+                const extraNotice = document.getElementById('extraDateNotice');
+                if (datesUsed >= 3) {
+                    extraNotice.style.display = 'inline';
+                } else {
+                    extraNotice.style.display = 'none';
+                }
+                
+                const grid = document.getElementById('candidatesGrid');
+                grid.innerHTML = courtship.spouse_options.map(opt => {
+                    const isIncomeRevealed = courtship.reveals.some(r => r.archetype_id === opt.id && r.trait_key === 'income');
+                    const isExpenseRevealed = courtship.reveals.some(r => r.archetype_id === opt.id && r.trait_key === 'expense_mod');
+                    const isAssetsRevealed = courtship.reveals.some(r => r.archetype_id === opt.id && r.trait_key === 'assets');
+                    
+                    return `
+                        <div class="choice-card" style="display:flex; flex-direction:column; justify-content:space-between; padding:1.25rem;">
+                            <div>
+                                <div style="font-weight:700; font-size:1.05rem; color:var(--accent-rose); margin-bottom:0.25rem;">
+                                    <i class="fa-solid fa-heart" style="margin-right:0.4rem;"></i>${opt.name}
+                                </div>
+                                <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.75rem; min-height:48px; line-height:1.4;">
+                                    ${opt.description}
+                                </p>
+                                
+                                <div style="font-size:0.8rem; border-top:1px solid rgba(255,255,255,0.05); padding-top:0.6rem; margin-bottom:0.75rem; display:flex; flex-direction:column; gap:0.4rem;">
+                                    <div style="display:flex; justify-content:space-between;">
+                                        <span style="color:var(--text-muted);">Spouse Income:</span>
+                                        <span id="income-${opt.id}" style="font-weight:600; color:var(--text-secondary);">${isIncomeRevealed ? _formatRevealedTrait(opt.id, 'income') : '?'}</span>
+                                    </div>
+                                    <div style="display:flex; justify-content:space-between;">
+                                        <span style="color:var(--text-muted);">Spouse Expenses:</span>
+                                        <span id="expense-${opt.id}" style="font-weight:600; color:var(--text-secondary);">${isExpenseRevealed ? _formatRevealedTrait(opt.id, 'expense_mod') : '?'}</span>
+                                    </div>
+                                    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                                        <span style="color:var(--text-muted); white-space:nowrap; margin-right:0.5rem;">Spouse Assets:</span>
+                                        <span id="assets-${opt.id}" style="font-weight:600; text-align:right; color:var(--text-secondary); max-width:180px; word-break:break-word;">${isAssetsRevealed ? _formatRevealedTrait(opt.id, 'assets') : '?'}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div style="display:flex; flex-direction:column; gap:0.4rem;">
+                                <div style="display:flex; gap:0.4rem;">
+                                    <button class="btn-ghost" style="flex:1; font-size:0.72rem; padding:0.4rem 0.2rem; border-color:rgba(244,63,94,0.3); color:var(--accent-rose);"
+                                            onclick="revealTrait('${opt.id}', 'income')" ${isIncomeRevealed ? 'disabled' : ''}>
+                                        Reveal Income
+                                    </button>
+                                    <button class="btn-ghost" style="flex:1; font-size:0.72rem; padding:0.4rem 0.2rem; border-color:rgba(244,63,94,0.3); color:var(--accent-rose);"
+                                            onclick="revealTrait('${opt.id}', 'expense_mod')" ${isExpenseRevealed ? 'disabled' : ''}>
+                                        Reveal Expense
+                                    </button>
+                                </div>
+                                <button class="btn-ghost" style="font-size:0.72rem; padding:0.4rem; border-color:rgba(244,63,94,0.3); color:var(--accent-rose);"
+                                        onclick="revealTrait('${opt.id}', 'assets')" ${isAssetsRevealed ? 'disabled' : ''}>
+                                    Reveal Portfolio
+                                </button>
+                                <button class="btn-glow" style="font-size:0.8rem; padding:0.5rem; background:var(--gradient-rose); border:none; color:white; font-weight:700; cursor:pointer;"
+                                        onclick="proposeMarriage('${opt.id}')">
+                                    Propose (₹88,000)
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                courtshipSec.style.display = 'none';
+            }
+        }
 
         // ── Optional Choices ──
         const optsCon = document.getElementById('optionalChoicesContainer');
@@ -336,3 +455,72 @@ window.buyOptionalChoice = async function(id) {
         showToast('Action failed', 'error');
     }
 };
+
+// ── Reveal Trait → POST /courtship/reveal ──
+window.revealTrait = async function(archetype_id, trait_key) {
+    const datesUsed = parseInt(document.getElementById('datesUsedVal').innerText || '0');
+    if (datesUsed >= 3) {
+        if (!confirm("You have used all 3 free dates. Going on an extra date to reveal this trait costs ₹5,000. Proceed?")) return;
+    }
+    try {
+        const h = await getAuthHeaders();
+        const res = await fetch(`${API_BASE_URL}/courtship/reveal`, {
+            method: 'POST',
+            headers: h,
+            body: JSON.stringify({ archetype_id, trait_key })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            await loadDashboard();
+        } else {
+            showToast(data.error, 'error');
+        }
+    } catch (err) {
+        showToast('Failed to reveal candidate trait', 'error');
+    }
+};
+
+// ── Propose Marriage → POST /courtship/marry ──
+window.proposeMarriage = async function(archetype_id) {
+    if (!confirm("Are you sure you want to propose? Wedding costs ₹88,000 and this choice is final.")) return;
+    try {
+        const h = await getAuthHeaders();
+        const res = await fetch(`${API_BASE_URL}/courtship/marry`, {
+            method: 'POST',
+            headers: h,
+            body: JSON.stringify({ choice: archetype_id })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            await loadDashboard();
+        } else {
+            showToast(data.error, 'error');
+        }
+    } catch (err) {
+        showToast('Failed to propose marriage', 'error');
+    }
+};
+
+// ── Format Revealed Trait ──
+function _formatRevealedTrait(archetype_id, trait_key) {
+    if (archetype_id === 'saver') {
+        if (trait_key === 'income') return '+₹10,000/mo';
+        if (trait_key === 'expense_mod') return '₹0/mo (net)';
+        if (trait_key === 'assets') return 'Gold ₹8K, EF ₹22K';
+    } else if (archetype_id === 'earner') {
+        if (trait_key === 'income') return '+₹36,000/mo';
+        if (trait_key === 'expense_mod') return '₹21,000/mo (net)';
+        if (trait_key === 'assets') return 'Brings no assets/liabilities';
+    } else if (archetype_id === 'investor') {
+        if (trait_key === 'income') return '+₹9,000/mo';
+        if (trait_key === 'expense_mod') return '₹8,000/mo (net)';
+        if (trait_key === 'assets') return 'Stocks ₹44K, Gold ₹20K, EF ₹24K';
+    } else if (archetype_id === 'anchor') {
+        if (trait_key === 'income') return '+₹14,000/mo';
+        if (trait_key === 'expense_mod') return '₹7,000/mo (net)';
+        if (trait_key === 'assets') return 'Stocks ₹8K, EF ₹45K';
+    }
+    return '?';
+}

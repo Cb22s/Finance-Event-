@@ -107,3 +107,52 @@ LIQUIDITY_TARGET_MONTHS = 6
 DISCIPLINE_CLEAN_MONTH = 100      # Met all obligations from cash flow
 DISCIPLINE_EF_RESCUE = 40         # Emergency fund had to cover a cash deficit
 DISCIPLINE_AUTO_LOAN = 0          # Cash crisis forced an auto-loan
+
+# ──── MARRIAGE & COURTSHIP PARAMETERS (ADR-002) ────
+MARRIAGE_MONTH = 6
+WEDDING_COST = 88000
+SPOUSE_BASE_EXPENSE = 9000
+
+ARCHETYPES = {
+    "saver": {
+        "name": "The Saver",
+        "income": 10000,
+        "expense_mod": -9000,
+        "stocks": 0,
+        "gold": 8000,
+        "ef": 22000,
+        "loan": 0,
+        "description": "Strong expense discipline, small emergency buffer. Low income; limited upside."
+    },
+    "earner": {
+        "name": "The Earner",
+        "income": 36000,
+        "expense_mod": 12000,
+        "stocks": 0,
+        "gold": 0,
+        "ef": 0,
+        "loan": 0,
+        "description": "High second income, but higher lifestyle expense and event exposure."
+    },
+    "investor": {
+        "name": "The Investor",
+        "income": 9000,
+        "expense_mod": -1000,
+        "stocks": 44000,
+        "gold": 20000,
+        "ef": 24000,
+        "loan": 0,
+        "description": "Brings an existing portfolio of stocks, gold, and cash. Volatile but high potential."
+    },
+    "anchor": {
+        "name": "The Anchor",
+        "income": 14000,
+        "expense_mod": -2000,
+        "stocks": 8000,
+        "gold": 0,
+        "ef": 45000,
+        "loan": 0,
+        "description": "Stable income and a well-funded emergency fund. Predictable and solid."
+    }
+}
+

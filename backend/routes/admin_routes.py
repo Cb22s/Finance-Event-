@@ -29,7 +29,8 @@ def start_game():
     try:
         supabase.table('game_control').update({
             'current_month': 1,
-            'game_status': 'active'
+            'game_status': 'active',
+            'marriage_round_active': False
         }).eq('id', 1).execute()
 
         # Wipe all player data
@@ -41,6 +42,7 @@ def start_game():
         supabase.table('player_relative_actions').delete().neq('user_id', dummy).execute()
         supabase.table('player_month_log').delete().neq('user_id', dummy).execute()
         supabase.table('player_month_actions').delete().neq('user_id', dummy).execute()
+        supabase.table('player_spouse_reveals').delete().neq('user_id', dummy).execute()
 
         # Wipe events and choices
         supabase.table('events').delete().neq('id', 0).execute()
@@ -346,7 +348,7 @@ def admin_players():
 # PLAYER DETAIL — manual edit (admin correction) + reset
 # Every edit is written to player_month_log for audit.
 # ──────────────────────────────────────────────
-_EDITABLE = ['cash', 'stocks', 'gold', 'emergency_fund', 'loans', 'status']
+_EDITABLE = ['cash', 'stocks', 'gold', 'emergency_fund', 'loans', 'status', 'spouse_archetype']
 _NUMERIC = ['cash', 'stocks', 'gold', 'emergency_fund', 'loans']
 
 
@@ -401,11 +403,20 @@ def update_player():
     discipline_avg = float(merged.get('discipline_score', 100) or 100)
     total_assets = (risk_state['cash'] + risk_state['stocks']
                      + risk_state['gold'] + risk_state['emergency_fund'])
+    spouse_income = 0.0
+    spouse_arch_id = merged.get('spouse_archetype')
+    if spouse_arch_id and spouse_arch_id != 'single':
+        from models.constants import ARCHETYPES
+        arc = ARCHETYPES.get(spouse_arch_id)
+        if arc:
+            spouse_income = arc['income']
+
     score_result = calculate_financial_health_score(
         net_worth=net_worth, month=month,
         emergency_fund=risk_state['emergency_fund'], monthly_expense=monthly_expense,
         loans=risk_state['loans'], total_assets=total_assets,
-        risk_score=risk_level, discipline_avg=discipline_avg
+        risk_score=risk_level, discipline_avg=discipline_avg,
+        spouse_income=spouse_income
     )
     fields['risk_level'] = risk_level
     fields['financial_health_score'] = score_result['score']
@@ -448,6 +459,8 @@ def update_settings():
         fields['auto_events'] = bool(data['auto_events'])
     if 'auto_market' in data:
         fields['auto_market'] = bool(data['auto_market'])
+    if 'marriage_round_active' in data:
+        fields['marriage_round_active'] = bool(data['marriage_round_active'])
     if not fields:
         return jsonify({"error": "Nothing to update."}), 400
     supabase.table('game_control').update(fields).eq('id', 1).execute()
@@ -534,7 +547,7 @@ def reset_player():
     try:
         for table in ['player_state', 'player_loans', 'player_sales',
                       'player_relative_score', 'player_relative_actions',
-                      'player_month_log', 'player_month_actions']:
+                      'player_month_log', 'player_month_actions', 'player_spouse_reveals']:
             supabase.table(table).delete().eq('user_id', uid).execute()
     except Exception as e:
         return jsonify({"error": f"Reset failed: {e}"}), 500

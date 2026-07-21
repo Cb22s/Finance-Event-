@@ -17,13 +17,16 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, value))
 
 
-def net_worth_component(net_worth: float, month: int) -> float:
+def net_worth_component(net_worth: float, month: int, spouse_income: float = 0.0) -> float:
     """
     Net worth normalized against total resources received so far
-    (initial budget + salaries). Capped at NW_NORMALIZATION_CAP so extreme
+    (initial budget + salaries + spouse salaries). Capped at NW_NORMALIZATION_CAP so extreme
     leverage cannot dominate the score. 0-100.
     """
     expected_resources = INITIAL_BUDGET + MONTHLY_INCOME * max(month - 1, 0)
+    # If married (spouse_income > 0) in Month 6+, they have spouse income starting from Month 6
+    if month >= 6 and spouse_income > 0:
+        expected_resources += spouse_income * (month - 6 + 1)
     if expected_resources <= 0:
         return 0.0
     ratio = max(net_worth, 0) / expected_resources
@@ -55,14 +58,15 @@ def risk_protection_component(risk_score: int) -> float:
 def calculate_financial_health_score(net_worth: float, month: int,
                                      emergency_fund: float, monthly_expense: float,
                                      loans: float, total_assets: float,
-                                     risk_score: int, discipline_avg: float) -> dict:
+                                     risk_score: int, discipline_avg: float,
+                                     spouse_income: float = 0.0) -> dict:
     """
     Composite Financial Health Score per ADR-008.
     Returns the composite and every component so the breakdown can be
     shown to players (public formula).
     """
     components = {
-        "net_worth": round(net_worth_component(net_worth, month), 1),
+        "net_worth": round(net_worth_component(net_worth, month, spouse_income), 1),
         "liquidity": round(liquidity_component(emergency_fund, monthly_expense), 1),
         "debt_control": round(debt_control_component(loans, total_assets), 1),
         "risk_protection": round(risk_protection_component(risk_score), 1),
@@ -70,6 +74,7 @@ def calculate_financial_health_score(net_worth: float, month: int,
     }
     composite = sum(components[k] * SCORE_WEIGHTS[k] for k in SCORE_WEIGHTS)
     return {"score": round(composite, 2), "components": components}
+
 
 
 def update_discipline_average(previous_avg: float, month: int, month_grade: float) -> float:

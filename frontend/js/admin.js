@@ -348,6 +348,16 @@ function renderPlayersTable(players) {
             <td style="padding:0.4rem;">${field('emergency_fund', uid, p.emergency_fund)}</td>
             <td style="padding:0.4rem;">${field('loans', uid, p.loans)}</td>
             <td style="padding:0.4rem;">
+                <select class="input-glass" style="padding:0.3rem 0.4rem; font-size:0.8rem;" id="spouse_archetype_${uid}">
+                    <option value="" ${p.spouse_archetype === null || p.spouse_archetype === '' ? 'selected' : ''}>none</option>
+                    <option value="single" ${p.spouse_archetype === 'single' ? 'selected' : ''}>single</option>
+                    <option value="saver" ${p.spouse_archetype === 'saver' ? 'selected' : ''}>saver</option>
+                    <option value="earner" ${p.spouse_archetype === 'earner' ? 'selected' : ''}>earner</option>
+                    <option value="investor" ${p.spouse_archetype === 'investor' ? 'selected' : ''}>investor</option>
+                    <option value="anchor" ${p.spouse_archetype === 'anchor' ? 'selected' : ''}>anchor</option>
+                </select>
+            </td>
+            <td style="padding:0.4rem;">
                 <select class="input-glass" style="padding:0.3rem 0.4rem; font-size:0.8rem;" id="status_${uid}">
                     <option value="active" ${p.status === 'active' ? 'selected' : ''}>active</option>
                     <option value="waiting" ${p.status === 'waiting' ? 'selected' : ''}>waiting</option>
@@ -372,6 +382,7 @@ function renderPlayersTable(players) {
                 <th style="padding:0.5rem;">Gold</th>
                 <th style="padding:0.5rem;">Emerg.</th>
                 <th style="padding:0.5rem;">Loans</th>
+                <th style="padding:0.5rem;">Spouse</th>
                 <th style="padding:0.5rem;">Status</th>
                 <th style="padding:0.5rem; text-align:right;">Net Worth</th>
                 <th style="padding:0.5rem;">Actions</th>
@@ -384,11 +395,13 @@ function renderPlayersTable(players) {
 window.savePlayer = async function (uid) {
     const val = (k) => { const el = document.getElementById(`${k}_${uid}`); return el ? el.value : undefined; };
     const statusEl = document.getElementById(`status_${uid}`);
+    const spouseEl = document.getElementById(`spouse_archetype_${uid}`);
     const payload = {
         user_id: uid,
         cash: val('cash'), stocks: val('stocks'), gold: val('gold'),
         emergency_fund: val('emergency_fund'), loans: val('loans'),
-        status: statusEl ? statusEl.value : undefined
+        status: statusEl ? statusEl.value : undefined,
+        spouse_archetype: spouseEl ? (spouseEl.value || null) : null
     };
     const res = await adminFetch(`${API_BASE_URL}/admin/update-player`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
@@ -495,8 +508,9 @@ document.addEventListener('DOMContentLoaded', () => {
 document.addEventListener('DOMContentLoaded', () => {
     const evEl = document.getElementById('toggleAutoEvents');
     const mkEl = document.getElementById('toggleAutoMarket');
+    const mrEl = document.getElementById('toggleMarriageRound');
     const hint = document.getElementById('settingsHint');
-    if (!evEl || !mkEl) return;
+    if (!evEl || !mkEl || !mrEl) return;
 
     function renderHint() {
         if (!hint) return;
@@ -512,6 +526,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const g = await res.json();
             evEl.checked = !!g.auto_events;
             mkEl.checked = !!g.auto_market;
+            mrEl.checked = !!g.marriage_round_active;
             renderHint();
         } catch (e) { /* ignore */ }
     }
@@ -529,5 +544,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     evEl.addEventListener('change', () => save('auto_events', evEl.checked));
     mkEl.addEventListener('change', () => save('auto_market', mkEl.checked));
+    mrEl.addEventListener('change', () => save('marriage_round_active', mrEl.checked));
     loadSettings();
 });
