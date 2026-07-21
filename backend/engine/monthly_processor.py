@@ -6,7 +6,7 @@
 
 from models.constants import (
     MONTHLY_INCOME, LIFESTYLE_COSTS, BIKE_EMI,
-    LOAN_INTEREST_RATE, LOAN_TERM_MONTHS,
+    LOAN_INTEREST_RATE, AUTO_LOAN_INTEREST_RATE, LOAN_TERM_MONTHS,
     INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH,
     ARCHETYPES, SPOUSE_BASE_EXPENSE
 )
@@ -44,7 +44,8 @@ def process_month_for_player(player: dict, month: int,
                               active_loans: list = None,
                               pending_sales: list = None,
                               auto_events: bool = True,
-                              auto_market: bool = True) -> dict:
+                              auto_market: bool = True,
+                              market_scenario: dict = None) -> dict:
     """
     Process a single month for a single player.
     
@@ -149,7 +150,9 @@ def process_month_for_player(player: dict, month: int,
     # ════════════════════════════════════════════
     # STEP 4: INVESTMENT GROWTH
     # ════════════════════════════════════════════
-    growth = calculate_investment_growth(player, month, auto_market)
+    # The scenario is resolved ONCE per month by the caller and passed to every
+    # player, so all players provably experience the identical market (ADR-009).
+    growth = calculate_investment_growth(player, month, auto_market, market_scenario)
     stocks = growth['stocks']
     gold = growth['gold']
     emergency_fund = growth['emergency_fund']
@@ -201,7 +204,8 @@ def process_month_for_player(player: dict, month: int,
             # Amortized EMI (fixed for the loan; always exceeds interest so the
             # balance shrinks to zero over LOAN_TERM_MONTHS). Never pay more than
             # what's owed on the final installment.
-            emi = _amortized_emi(principal, rate, LOAN_TERM_MONTHS)
+            term = int(loan.get('term_months') or LOAN_TERM_MONTHS)
+            emi = float(loan.get('emi') or 0) or _amortized_emi(principal, rate, term)
             payment = min(emi, current_amount)
             cash -= payment
             current_amount -= payment
@@ -239,18 +243,24 @@ def process_month_for_player(player: dict, month: int,
             deficit -= emergency_fund
             emergency_fund = 0
             # Auto-loan for the remaining deficit
+            # Forced borrowing is punished with the higher AUTO rate — running out
+            # of cash should cost more than borrowing deliberately and on plan.
+            auto_emi = _amortized_emi(deficit, AUTO_LOAN_INTEREST_RATE, LOAN_TERM_MONTHS)
             new_loans.append({
                 "user_id": uid,
                 "principal": round(deficit, 2),
                 "current_amount": round(deficit, 2),
-                "interest_rate": LOAN_INTEREST_RATE,
+                "interest_rate": AUTO_LOAN_INTEREST_RATE,
                 "month_taken": month,
+                "term_months": LOAN_TERM_MONTHS,
+                "loan_type": "auto",
+                "emi": round(auto_emi, 2),
                 "status": "active"
             })
             total_loan_outstanding += deficit
             cash = 0
             month_discipline = DISCIPLINE_AUTO_LOAN
-            event_log.append(f"⚠️ CRITICAL: Cash deficit! Emergency fund depleted. Auto-loan of ₹{deficit:,.0f} taken at {LOAN_INTEREST_RATE*100}% interest!")
+            event_log.append(f"⚠️ CRITICAL: Cash deficit! Emergency fund depleted. Auto-loan of ₹{deficit:,.0f} taken at {AUTO_LOAN_INTEREST_RATE*100:.1f}%/mo penalty interest!")
 
     # ════════════════════════════════════════════
     # STEP 9: CALCULATE FINAL STATE

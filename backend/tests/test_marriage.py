@@ -1,7 +1,10 @@
 import unittest
 from engine.scoring import calculate_financial_health_score, net_worth_component
 from engine.monthly_processor import process_month_for_player
-from models.constants import ARCHETYPES, SPOUSE_BASE_EXPENSE, MONTHLY_INCOME
+from models.constants import (
+    ARCHETYPES, SPOUSE_BASE_EXPENSE, MONTHLY_INCOME, LIFESTYLE_COSTS
+)
+from engine.market_engine import calculate_inflation_adjustment
 
 class TestMarriageSystem(unittest.TestCase):
     def test_net_worth_normalization_with_spouse_income(self):
@@ -38,12 +41,15 @@ class TestMarriageSystem(unittest.TestCase):
             auto_market=False
         )
         
-        # Expected base lifestyle city total expense = 40000
-        # Saver spouse expense = SPOUSE_BASE_EXPENSE (9000) + expense_mod (-9000) = 0
-        # Total expense = 40000 (base) * (1.005 ** 4) (inflation) + 0 (spouse) = 40806.02
-        # Income = MONTHLY_INCOME (100000) + spouse_income (10000) = 110000
-        # Ending cash = 10000 (start) + 110000 (income) - 40806.02 (expense) = 79193.98
-        self.assertEqual(result["ending_cash"], 79193.98)
+        # Derived from constants rather than hardcoded, so a future rebalance of
+        # LIFESTYLE_COSTS updates the expectation instead of silently failing.
+        # (This assertion previously hardcoded 79193.98 against a city expense of
+        # 40,000; the 2026-07-21 rebalance raised it to 78,000 and broke the test.)
+        expense = calculate_inflation_adjustment(LIFESTYLE_COSTS['city']['total'], 7)
+        spouse_expense = SPOUSE_BASE_EXPENSE + ARCHETYPES['saver']['expense_mod']
+        spouse_income = ARCHETYPES['saver']['income']
+        expected = round(10000 + MONTHLY_INCOME + spouse_income - expense - spouse_expense, 2)
+        self.assertAlmostEqual(result["ending_cash"], expected, places=2)
         self.assertEqual(result["updated_state"]["spouse_archetype"], "saver")
 
 if __name__ == "__main__":

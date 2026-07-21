@@ -70,6 +70,38 @@ def get_all_event_logs(user_id: str) -> list:
     return res.data if res.data else []
 
 
+def get_market_scenario_row(month: int) -> dict | None:
+    """
+    Fetch the admin-authored market scenario for a month, if one exists.
+    Returns None when the month is unauthored, which is the signal for the engine
+    to fall back to its auto-generated correlated regime.
+    """
+    try:
+        res = (supabase.table('market_scenarios')
+               .select('*')
+               .eq('month', month)
+               .limit(1)
+               .execute())
+        return res.data[0] if res.data else None
+    except Exception:
+        # Table missing (migration not applied) must not break the month roll.
+        return None
+
+
+def get_month_allocation(user_id: str, month: int) -> dict | None:
+    """Fetch a player's recorded allocation for a month, if any."""
+    try:
+        res = (supabase.table('player_month_allocations')
+               .select('*')
+               .eq('user_id', user_id)
+               .eq('month', month)
+               .limit(1)
+               .execute())
+        return res.data[0] if res.data else None
+    except Exception:
+        return None
+
+
 def get_admin_events_for_month(month: int) -> list:
     """Fetch admin-created events for a specific month."""
     res = (supabase.table('events')
@@ -179,6 +211,18 @@ def mark_action(user_id: str, month: int, action_key: str) -> bool:
         if _is_unique_violation(e):
             return False
         raise
+
+
+# ──── Monthly allocation gate ────
+# The allocation for month N is claimed via player_month_actions, reusing the same
+# atomic unique-violation claim that protects optional-choice purchases. That gives
+# idempotency for free and needs no extra state on player_state.
+def allocation_key(month: int) -> str:
+    return f"alloc:{month}"
+
+
+def allocation_done(user_id: str, month: int) -> bool:
+    return action_done(user_id, month, allocation_key(month))
 
 
 # Backwards-compatible wrappers for optional-choice purchases.

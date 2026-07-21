@@ -127,7 +127,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     await loadDashboard();
-    setInterval(loadDashboard, 5000);
+    // The dashboard polls every 5s. Without this guard the poll re-rendered the
+    // allocation and loan inputs mid-keystroke and wiped whatever the player had
+    // typed — the single most infuriating bug in the old UI.
+    setInterval(() => {
+        if (isEditing()) return;
+        loadDashboard();
+    }, 5000);
 });
 
 // ══════════════════════════════════════════════
@@ -207,6 +213,12 @@ async function loadDashboard() {
         const riskColor = riskLevel > 70 ? 'var(--accent-rose)' : riskLevel > 40 ? 'var(--accent-amber)' : 'var(--accent-emerald)';
         document.getElementById('riskVal').innerHTML = `<span style="color:${riskColor}">${riskLabel} (${riskLevel})</span>`;
         document.getElementById('trustVal').innerText = p.trust_score || 0;
+
+        // ── V2 renders: market news, monthly allocation, loans ──
+        renderMarketNews(data.market, p.month);
+        renderAllocation(data.allocation, data.loan_info);
+        renderLoans(data.loan_info);
+        renderActionBanner(data.allocation, p);
 
         // ── Courtship & Marriage UI Render ──
         const courtshipSec = document.getElementById('courtshipSection');
@@ -523,4 +535,282 @@ function _formatRevealedTrait(archetype_id, trait_key) {
         if (trait_key === 'assets') return 'Stocks ₹8K, EF ₹45K';
     }
     return '?';
+}
+
+
+// ============================================================================
+// V2 UI — market news, monthly allocation, loans
+// ============================================================================
+
+const ALLOC_IDS = ['allocStocks', 'allocGold', 'allocEf', 'allocPrepay', 'allocKeep'];
+const LOAN_IDS = ['loanAmount', 'loanTerm'];
+
+// True while the player has focus in any input they are mid-way through filling.
+// Used to suspend the 5s dashboard poll so a re-render cannot destroy their entry.
+function isEditing() {
+    const el = document.activeElement;
+    if (!el) return false;
+    return ALLOC_IDS.includes(el.id) || LOAN_IDS.includes(el.id);
+}
+
+function pctText(v) {
+    const pct = (v * 100).toFixed(1);
+    return `${v >= 0 ? '+' : ''}${pct}%`;
+}
+
+function pctColor(v) {
+    if (v > 0.0005) return 'var(--accent-emerald)';
+    if (v < -0.0005) return 'var(--accent-rose)';
+    return 'var(--text-secondary)';
+}
+
+// ── MARKET NEWS ──────────────────────────────────────────────────────────────
+function renderMarketNews(market, month) {
+    const sec = document.getElementById('marketNews');
+    if (!sec) return;
+    if (!market || market.source === 'flat') {
+        sec.style.display = 'none';
+        return;
+    }
+    sec.style.display = 'block';
+    document.getElementById('marketName').innerText = market.name || 'Market Update';
+    document.getElementById('marketMonth').innerText = `Month ${month}`;
+    document.getElementById('marketReason').innerText = market.reason || '';
+
+    const sEl = document.getElementById('marketStockPct');
+    const gEl = document.getElementById('marketGoldPct');
+    sEl.innerText = pctText(market.stock_pct);
+    sEl.style.color = pctColor(market.stock_pct);
+    gEl.innerText = pctText(market.gold_pct);
+    gEl.style.color = pctColor(market.gold_pct);
+}
+
+// ── ACTION BANNER ────────────────────────────────────────────────────────────
+function renderActionBanner(alloc, player) {
+    const banner = document.getElementById('actionBanner');
+    if (!banner) return;
+    if (alloc && alloc.required && !alloc.done) {
+        banner.style.display = 'block';
+        document.getElementById('actionBannerTitle').innerText = 'Allocation required';
+        document.getElementById('actionBannerText').innerText =
+            `You have ${formatINR(alloc.available_cash)} sitting idle. Decide where it goes before ending Month ${player.month}.`;
+        document.getElementById('actionBannerBtn').onclick = () => {
+            document.getElementById('allocSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        };
+    } else {
+        banner.style.display = 'none';
+    }
+}
+
+// ── MONTHLY ALLOCATION ───────────────────────────────────────────────────────
+function renderAllocation(alloc, loanInfo) {
+    const sec = document.getElementById('allocSection');
+    if (!sec || !alloc) return;
+
+    if (!alloc.required || alloc.done) {
+        sec.style.display = 'none';
+        return;
+    }
+    sec.style.display = 'block';
+
+    const available = alloc.available_cash;
+    document.getElementById('allocAvailable').innerText = formatINR(available);
+
+    // Cap the repay field at what is actually owed.
+    const outstanding = (loanInfo && loanInfo.outstanding) || 0;
+    const prepayWrap = document.getElementById('allocPrepayWrap');
+    const prepayInput = document.getElementById('allocPrepay');
+    if (outstanding <= 0) {
+        prepayWrap.style.display = 'none';
+        prepayInput.value = 0;
+    } else {
+        prepayWrap.style.display = 'block';
+        prepayInput.max = outstanding;
+        document.getElementById('allocPrepayMax').innerText = `(owed ${formatINR(outstanding)})`;
+    }
+
+    recalcAllocation();
+}
+
+function allocTotal() {
+    return ALLOC_IDS.reduce((sum, id) => {
+        const el = document.getElementById(id);
+        return sum + (el ? (parseFloat(el.value) || 0) : 0);
+    }, 0);
+}
+
+function recalcAllocation() {
+    const availEl = document.getElementById('allocAvailable');
+    if (!availEl) return;
+    const available = parseFloat(availEl.innerText.replace(/[^0-9.-]/g, '')) || 0;
+    const total = allocTotal();
+    const diff = available - total;
+
+    const msg = document.getElementById('allocRemaining');
+    const btn = document.getElementById('allocSubmit');
+
+    if (Math.abs(diff) < 0.5) {
+        msg.innerHTML = '<span style="color: var(--accent-emerald);">✓ Fully allocated</span>';
+        btn.disabled = false;
+    } else if (diff > 0) {
+        msg.innerHTML = `<span style="color: var(--accent-amber);">${formatINR(diff)} still unallocated</span>`;
+        btn.disabled = true;
+    } else {
+        msg.innerHTML = `<span style="color: var(--accent-rose);">Over by ${formatINR(Math.abs(diff))}</span>`;
+        btn.disabled = true;
+    }
+}
+
+// ── LOANS ────────────────────────────────────────────────────────────────────
+function renderLoans(info) {
+    const sec = document.getElementById('loanSection');
+    if (!sec || !info) return;
+    sec.style.display = 'block';
+
+    const list = document.getElementById('loanList');
+    if (!info.active || info.active.length === 0) {
+        list.innerHTML = '<div style="font-size:0.85rem; color: var(--text-muted);">No active loans.</div>';
+    } else {
+        list.innerHTML = info.active.map(l => {
+            const isAuto = l.loan_type === 'auto';
+            return `<div class="choice-card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+                <div>
+                    <div style="font-weight:600; font-size:0.9rem;">
+                        ${isAuto ? '⚠️ Emergency Auto-Loan' : '🏦 Personal Loan'}
+                        <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400;">taken Month ${l.month_taken}</span>
+                    </div>
+                    <div style="font-size:0.75rem; color: var(--text-muted);">
+                        ${(parseFloat(l.interest_rate) * 100).toFixed(1)}%/month · ${l.term_months || 6}-month term
+                        ${isAuto ? ' · penalty rate' : ''}
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-weight:700; color: var(--accent-rose);">${formatINR(l.current_amount)}</div>
+                    <div style="font-size:0.75rem; color: var(--text-muted);">EMI ${formatINR(l.emi || 0)}</div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    document.getElementById('loanSubtitle').innerText =
+        `You can borrow up to ${formatINR(info.borrowing_headroom)} more at ` +
+        `${(info.interest_rate * 100).toFixed(1)}%/month. Total EMI ${formatINR(info.monthly_emi)} of ${formatINR(info.emi_cap)} allowed.`;
+
+    const form = document.getElementById('loanForm');
+    const quote = document.getElementById('loanQuote');
+    if (!info.can_borrow_this_month) {
+        form.style.display = 'none';
+        quote.innerText = 'You have already taken a loan this month.';
+    } else if (info.borrowing_headroom <= 0) {
+        form.style.display = 'none';
+        quote.innerText = 'You have reached your debt ceiling. Repay before borrowing again.';
+    } else {
+        form.style.display = 'grid';
+    }
+}
+
+async function refreshLoanQuote() {
+    const amount = parseFloat(document.getElementById('loanAmount').value) || 0;
+    const term = parseInt(document.getElementById('loanTerm').value, 10);
+    const quote = document.getElementById('loanQuote');
+    if (amount <= 0) { quote.innerText = ''; return; }
+    try {
+        const res = await fetch(`${API_BASE_URL}/loan/quote`, {
+            method: 'POST',
+            headers: await getAuthHeaders(),
+            body: JSON.stringify({ amount, term_months: term })
+        });
+        const d = await res.json();
+        if (!res.ok) { quote.innerText = d.error || ''; return; }
+        quote.innerHTML = `EMI <strong>${formatINR(d.emi)}</strong>/month for ${d.term_months} months · ` +
+            `total repayment <strong>${formatINR(d.total_repayment)}</strong> ` +
+            `(interest ${formatINR(d.total_interest)})`;
+    } catch (e) {
+        quote.innerText = '';
+    }
+}
+
+// ── Wiring ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    ALLOC_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', recalcAllocation);
+    });
+
+    const restBtn = document.getElementById('allocRestBtn');
+    if (restBtn) restBtn.addEventListener('click', () => {
+        const available = parseFloat(
+            document.getElementById('allocAvailable').innerText.replace(/[^0-9.-]/g, '')) || 0;
+        const others = ALLOC_IDS.filter(i => i !== 'allocKeep')
+            .reduce((s, i) => s + (parseFloat(document.getElementById(i).value) || 0), 0);
+        document.getElementById('allocKeep').value = Math.max(0, Math.round(available - others));
+        recalcAllocation();
+    });
+
+    const allocBtn = document.getElementById('allocSubmit');
+    if (allocBtn) allocBtn.addEventListener('click', submitAllocation);
+
+    LOAN_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', refreshLoanQuote);
+        if (el) el.addEventListener('change', refreshLoanQuote);
+    });
+
+    const loanBtn = document.getElementById('loanSubmit');
+    if (loanBtn) loanBtn.addEventListener('click', submitLoan);
+});
+
+async function submitAllocation() {
+    const btn = document.getElementById('allocSubmit');
+    btn.disabled = true;
+    const payload = {
+        stocks: parseFloat(document.getElementById('allocStocks').value) || 0,
+        gold: parseFloat(document.getElementById('allocGold').value) || 0,
+        emergency_fund: parseFloat(document.getElementById('allocEf').value) || 0,
+        loan_prepay: parseFloat(document.getElementById('allocPrepay').value) || 0,
+        keep_cash: parseFloat(document.getElementById('allocKeep').value) || 0
+    };
+    try {
+        const res = await fetch(`${API_BASE_URL}/allocate-month`, {
+            method: 'POST',
+            headers: await getAuthHeaders(),
+            body: JSON.stringify(payload)
+        });
+        const d = await res.json();
+        if (res.ok) {
+            showToast(d.message || 'Allocation confirmed', 'success');
+            ALLOC_IDS.forEach(id => { document.getElementById(id).value = 0; });
+            await loadDashboard();
+        } else {
+            showToast(d.error || 'Allocation failed', 'error');
+            btn.disabled = false;
+        }
+    } catch (e) {
+        showToast('Failed to connect to server', 'error');
+        btn.disabled = false;
+    }
+}
+
+async function submitLoan() {
+    const btn = document.getElementById('loanSubmit');
+    const amount = parseFloat(document.getElementById('loanAmount').value) || 0;
+    const term = parseInt(document.getElementById('loanTerm').value, 10);
+    btn.disabled = true;
+    try {
+        const res = await fetch(`${API_BASE_URL}/loan`, {
+            method: 'POST',
+            headers: await getAuthHeaders(),
+            body: JSON.stringify({ amount, term_months: term })
+        });
+        const d = await res.json();
+        if (res.ok) {
+            showToast(`${d.message} EMI ${formatINR(d.emi)}/month.`, 'success');
+            await loadDashboard();
+        } else {
+            showToast(d.error || 'Loan request failed', 'error');
+        }
+    } catch (e) {
+        showToast('Failed to connect to server', 'error');
+    }
+    btn.disabled = false;
 }

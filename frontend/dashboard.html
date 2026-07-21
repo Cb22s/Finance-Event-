@@ -139,6 +139,120 @@
             </div>
         </div>
 
+        <!-- ══ ACTION REQUIRED BANNER ══
+             The old dashboard gave no indication that the player owed a decision.
+             Players sat on the page waiting for something to happen. -->
+        <div id="actionBanner" class="glass-card mb-section" style="display:none; border-left: 4px solid var(--accent-amber); background: rgba(245,158,11,0.06);">
+            <div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+                <i class="fa-solid fa-circle-exclamation" style="font-size:1.5rem; color: var(--accent-amber);"></i>
+                <div style="flex:1; min-width:200px;">
+                    <div style="font-weight:700; font-size:1rem;" id="actionBannerTitle">Action required</div>
+                    <div style="font-size:0.85rem; color: var(--text-muted);" id="actionBannerText"></div>
+                </div>
+                <button class="btn-primary" id="actionBannerBtn" style="font-size:0.85rem; padding:0.5rem 1.25rem;">Allocate now</button>
+            </div>
+        </div>
+
+        <!-- ══ MARKET NEWS ══
+             Stocks and gold now move together from ONE scenario with a stated cause,
+             so the player can reason about WHY their portfolio moved. -->
+        <div id="marketNews" class="glass-card mb-section animate-fade-in-up" style="display:none;">
+            <div class="section-header">
+                <div class="section-icon icon-info" style="background: rgba(6,182,212,0.1); color: var(--accent-cyan);"><i class="fa-solid fa-newspaper"></i></div>
+                <div>
+                    <div class="section-title" id="marketName">Market Update</div>
+                    <div class="section-subtitle" id="marketMonth"></div>
+                </div>
+            </div>
+            <p id="marketReason" style="font-size:0.9rem; color: var(--text-secondary); margin: 0 0 1rem 0; line-height:1.6;"></p>
+            <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+                <div style="flex:1; min-width:150px; padding:0.85rem 1rem; border-radius:12px; background: rgba(255,255,255,0.03);">
+                    <div style="font-size:0.7rem; letter-spacing:0.06em; text-transform:uppercase; color: var(--text-muted);">Stock Market</div>
+                    <div id="marketStockPct" style="font-size:1.5rem; font-weight:700;">—</div>
+                </div>
+                <div style="flex:1; min-width:150px; padding:0.85rem 1rem; border-radius:12px; background: rgba(255,255,255,0.03);">
+                    <div style="font-size:0.7rem; letter-spacing:0.06em; text-transform:uppercase; color: var(--text-muted);">Gold Price</div>
+                    <div id="marketGoldPct" style="font-size:1.5rem; font-weight:700;">—</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══ MONTHLY ALLOCATION ══ -->
+        <div id="allocSection" class="glass-card mb-section animate-fade-in-up" style="display:none;">
+            <div class="section-header">
+                <div class="section-icon icon-primary"><i class="fa-solid fa-scale-balanced"></i></div>
+                <div>
+                    <div class="section-title">Allocate This Month's Cash</div>
+                    <div class="section-subtitle">Distribute every rupee before you can end the round.</div>
+                </div>
+            </div>
+
+            <div style="text-align:center; margin-bottom:1.25rem;">
+                <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.06em; color: var(--text-muted);">Available to allocate</div>
+                <div id="allocAvailable" style="font-size:2rem; font-weight:800;">₹0</div>
+                <div id="allocRemaining" style="font-size:0.85rem; margin-top:0.25rem;"></div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:0.85rem;">
+                <label class="choice-card" style="display:block;">
+                    <span style="font-size:0.8rem; color:var(--text-muted);"><i class="fa-solid fa-chart-line" style="margin-right:0.35rem;"></i>Stocks</span>
+                    <input type="number" min="0" step="1000" value="0" id="allocStocks" class="input-glass alloc-input" style="width:100%; margin-top:0.4rem;">
+                </label>
+                <label class="choice-card" style="display:block;">
+                    <span style="font-size:0.8rem; color:var(--text-muted);"><i class="fa-solid fa-coins" style="margin-right:0.35rem;"></i>Gold</span>
+                    <input type="number" min="0" step="1000" value="0" id="allocGold" class="input-glass alloc-input" style="width:100%; margin-top:0.4rem;">
+                </label>
+                <label class="choice-card" style="display:block;">
+                    <span style="font-size:0.8rem; color:var(--text-muted);"><i class="fa-solid fa-shield-halved" style="margin-right:0.35rem;"></i>Emergency Fund</span>
+                    <input type="number" min="0" step="1000" value="0" id="allocEf" class="input-glass alloc-input" style="width:100%; margin-top:0.4rem;">
+                </label>
+                <label class="choice-card" style="display:block;" id="allocPrepayWrap">
+                    <span style="font-size:0.8rem; color:var(--text-muted);"><i class="fa-solid fa-hand-holding-dollar" style="margin-right:0.35rem;"></i>Repay Loan <span id="allocPrepayMax" style="color:var(--text-muted);"></span></span>
+                    <input type="number" min="0" step="1000" value="0" id="allocPrepay" class="input-glass alloc-input" style="width:100%; margin-top:0.4rem;">
+                </label>
+                <label class="choice-card" style="display:block;">
+                    <span style="font-size:0.8rem; color:var(--text-muted);"><i class="fa-solid fa-wallet" style="margin-right:0.35rem;"></i>Keep as Cash</span>
+                    <input type="number" min="0" step="1000" value="0" id="allocKeep" class="input-glass alloc-input" style="width:100%; margin-top:0.4rem;">
+                </label>
+            </div>
+
+            <div style="display:flex; gap:0.75rem; margin-top:1.25rem; flex-wrap:wrap;">
+                <button class="btn-ghost" id="allocRestBtn" style="font-size:0.8rem;">Put remainder in cash</button>
+                <button class="btn-primary" id="allocSubmit" style="flex:1; min-width:180px;" disabled>Confirm Allocation</button>
+            </div>
+        </div>
+
+        <!-- ══ LOANS ══
+             The dashboard previously displayed a loan BALANCE with no way to borrow. -->
+        <div id="loanSection" class="glass-card mb-section animate-fade-in-up" style="display:none;">
+            <div class="section-header">
+                <div class="section-icon icon-danger" style="background: rgba(244,63,94,0.1); color: var(--accent-rose);"><i class="fa-solid fa-building-columns"></i></div>
+                <div>
+                    <div class="section-title">Loans</div>
+                    <div class="section-subtitle" id="loanSubtitle">Borrow to seize an opportunity — repay with interest every month.</div>
+                </div>
+            </div>
+
+            <div id="loanList" style="margin-bottom:1rem;"></div>
+
+            <div id="loanForm" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:0.85rem; align-items:end;">
+                <label style="display:block;">
+                    <span style="font-size:0.8rem; color:var(--text-muted);">Amount (₹)</span>
+                    <input type="number" min="0" step="5000" value="50000" id="loanAmount" class="input-glass" style="width:100%; margin-top:0.4rem;">
+                </label>
+                <label style="display:block;">
+                    <span style="font-size:0.8rem; color:var(--text-muted);">Term</span>
+                    <select id="loanTerm" class="input-glass" style="width:100%; margin-top:0.4rem;">
+                        <option value="3">3 months</option>
+                        <option value="6" selected>6 months</option>
+                        <option value="12">12 months</option>
+                    </select>
+                </label>
+                <button class="btn-primary" id="loanSubmit" style="height:42px;">Take Loan</button>
+            </div>
+            <div id="loanQuote" style="font-size:0.85rem; color: var(--text-muted); margin-top:0.85rem;"></div>
+        </div>
+
         <!-- ── Courtship & Marriage (Month 6 Special Event) ── -->
         <div id="courtshipSection" class="glass-card mb-section animate-fade-in-up" style="display: none;">
             <div class="section-header">

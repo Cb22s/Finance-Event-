@@ -8,7 +8,8 @@ import hashlib
 from models.constants import (
     STOCK_BASE_GROWTH, GOLD_BASE_GROWTH, EMERGENCY_FUND_GROWTH,
     STOCK_VOLATILITY_MIN, STOCK_VOLATILITY_MAX,
-    INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH
+    INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH,
+    MARKET_REGIMES, POST_SHOCK_REGIMES, SHOCK_REGIMES
 )
 
 
@@ -25,57 +26,139 @@ def _seeded_rng(month: int) -> random.Random:
     return random.Random(seed)
 
 
-def calculate_investment_growth(player: dict, month: int, auto_market: bool = True) -> dict:
-    """
-    Calculate monthly investment growth with volatility.
+def _regime_rng(month: int) -> random.Random:
+    """Separate seeded stream for regime SELECTION, so changing the magnitude
+    draw never reshuffles which regime a month gets."""
+    seed = int(hashlib.sha256(f"GLOBAL:{month}:regime".encode()).hexdigest(), 16)
+    return random.Random(seed)
 
-    Stocks: Base growth + random volatility based on risk
-    Gold: Stable growth with minor fluctuation
-    Emergency Fund: Small savings interest
 
-    Returns updated values and log messages.
+def _pick_regime(month: int, prev_regime: str | None) -> str:
     """
-    rng = _seeded_rng(month)  # global market path — identical for all players (ADR-009)
+    Weighted pick of a market regime for `month`. If the previous month was a
+    shock (war/crash), the pick is restricted to POST_SHOCK_REGIMES so the market
+    has memory — a crash is followed by a recovery or a drift, not by a second
+    independent crash. Without this the auto market is a memoryless coin flip and
+    players correctly learn that reading it is pointless.
+    """
+    rng = _regime_rng(month)
+    if prev_regime in SHOCK_REGIMES:
+        pool = POST_SHOCK_REGIMES
+    else:
+        pool = list(MARKET_REGIMES.keys())
+    weights = [MARKET_REGIMES[k]["weight"] for k in pool]
+    return rng.choices(pool, weights=weights, k=1)[0]
+
+
+def _regime_chain(month: int) -> str:
+    """
+    Deterministically walk regimes from month 1 to `month` and return the regime
+    for `month`. Deterministic and player-independent (ADR-009): every player in a
+    given month faces the identical regime, so the leaderboard measures how you
+    positioned against the market, never which market you were dealt.
+    """
+    prev = None
+    for m in range(1, month + 1):
+        prev = _pick_regime(m, prev)
+    return prev
+
+
+def resolve_market_scenario(month: int, authored: dict | None = None,
+                            auto_market: bool = True) -> dict:
+    """
+    Resolve THE scenario for a month. Single source of truth for how stocks and
+    gold move, and why.
+
+    Precedence:
+      1. `authored` — an admin-written row from public.market_scenarios. Always wins.
+      2. auto_market=True — a correlated regime generated from the seeded chain.
+      3. auto_market=False and nothing authored — flat month, prices hold.
+
+    Returns: {name, reason, stock_pct, gold_pct, source, regime}
+    """
+    if authored:
+        return {
+            "name": authored.get("name") or "Market Update",
+            "reason": authored.get("reason") or "",
+            "stock_pct": float(authored.get("stock_pct") or 0.0),
+            "gold_pct": float(authored.get("gold_pct") or 0.0),
+            "source": "admin",
+            "regime": authored.get("regime") or "authored"
+        }
+
+    if not auto_market:
+        return {
+            "name": "Quiet Market",
+            "reason": "No significant market movement this month.",
+            "stock_pct": 0.0,
+            "gold_pct": 0.0,
+            "source": "flat",
+            "regime": "flat"
+        }
+
+    regime_key = _regime_chain(month)
+    regime = MARKET_REGIMES[regime_key]
+    rng = _seeded_rng(month)
+    # Draw both magnitudes unconditionally, stocks first then gold, so the shared
+    # per-month stream advances identically for every player (ADR-009 / QA-014).
+    stock_pct = rng.uniform(*regime["stock"])
+    gold_pct = rng.uniform(*regime["gold"])
+    # Base drift on top of the regime move, damped so the regime dominates.
+    stock_pct += STOCK_BASE_GROWTH
+    gold_pct += GOLD_BASE_GROWTH
+    return {
+        "name": regime["name"],
+        "reason": regime["reason"],
+        "stock_pct": round(stock_pct, 4),
+        "gold_pct": round(gold_pct, 4),
+        "source": "auto",
+        "regime": regime_key
+    }
+
+
+def calculate_investment_growth(player: dict, month: int, auto_market: bool = True,
+                                scenario: dict | None = None) -> dict:
+    """
+    Apply the month's market scenario to a player's holdings.
+
+    Stocks and gold move TOGETHER according to one resolved scenario, with a stated
+    cause, rather than from two independent RNG draws. `scenario` may be passed in
+    (already resolved by the caller, e.g. from an admin-authored row); if omitted it
+    is resolved here.
+    """
+    if scenario is None:
+        scenario = resolve_market_scenario(month, None, auto_market)
 
     stocks = float(player.get('stocks', 0))
     gold = float(player.get('gold', 0))
     emergency = float(player.get('emergency_fund', 0))
     logs = []
 
-    # ──── GLOBAL MARKET DRAWS (ADR-009 / QA-014 fairness fix) ────
-    # Draw BOTH market variables unconditionally, once, in this fixed order
-    # (stock volatility first, then gold fluctuation), so the shared per-month
-    # RNG stream advances identically for EVERY player regardless of which
-    # assets they hold. Previously these draws lived inside the `stocks > 0`
-    # and `gold > 0` guards below, so a player holding no stocks skipped the
-    # stock draw and their gold draw consumed the stream position a
-    # stock-holder's stock draw would occupy — two players with identical gold
-    # could receive different gold rates purely from portfolio composition,
-    # violating ADR-009 / SRS §5 Invariant 2 (market outcomes identical for
-    # all players in a month). The `> 0` guards below now gate only whether the
-    # drawn rate is APPLIED to a balance, never whether the value is drawn.
-    volatility = rng.uniform(STOCK_VOLATILITY_MIN, STOCK_VOLATILITY_MAX)
-    gold_fluctuation = rng.uniform(-0.02, 0.03)  # Small range
+    stock_rate = scenario['stock_pct']
+    gold_rate = scenario['gold_pct']
 
-    # ──── STOCKS (Volatile) ────
-    if auto_market and stocks > 0:
-        # Base growth + random volatility
-        stock_growth_rate = STOCK_BASE_GROWTH + volatility
-        stock_delta = stocks * stock_growth_rate
-        stocks += stock_delta
-        stocks = max(0, stocks)
+    # ──── MARKET HEADLINE ────
+    if scenario['source'] != 'flat':
+        logs.append(f"📰 {scenario['name']} — {scenario['reason']}")
+        logs.append(
+            f"   Market this month: Stocks {stock_rate*100:+.1f}% | Gold {gold_rate*100:+.1f}%"
+        )
+
+    # ──── STOCKS ────
+    if stocks > 0 and stock_rate != 0:
+        stock_delta = stocks * stock_rate
+        stocks = max(0, stocks + stock_delta)
         direction = "📈" if stock_delta >= 0 else "📉"
-        logs.append(f"{direction} Stocks: {stock_growth_rate*100:+.1f}% (₹{stock_delta:+,.0f})")
+        logs.append(f"{direction} Your stocks: {stock_rate*100:+.1f}% (₹{stock_delta:+,.0f})")
 
-    # ──── GOLD (Stable) ────
-    if auto_market and gold > 0:
-        gold_growth_rate = GOLD_BASE_GROWTH + gold_fluctuation
-        gold_delta = gold * gold_growth_rate
-        gold += gold_delta
-        gold = max(0, gold)
-        logs.append(f"🥇 Gold: {gold_growth_rate*100:+.1f}% (₹{gold_delta:+,.0f})")
+    # ──── GOLD ────
+    if gold > 0 and gold_rate != 0:
+        gold_delta = gold * gold_rate
+        gold = max(0, gold + gold_delta)
+        direction = "📈" if gold_delta >= 0 else "📉"
+        logs.append(f"{direction} Your gold: {gold_rate*100:+.1f}% (₹{gold_delta:+,.0f})")
 
-    # ──── EMERGENCY FUND (Savings Interest) ────
+    # ──── EMERGENCY FUND (savings interest — unaffected by market) ────
     if emergency > 0:
         ef_delta = emergency * EMERGENCY_FUND_GROWTH
         emergency += ef_delta
@@ -85,6 +168,7 @@ def calculate_investment_growth(player: dict, month: int, auto_market: bool = Tr
         "stocks": round(stocks, 2),
         "gold": round(gold, 2),
         "emergency_fund": round(emergency, 2),
+        "scenario": scenario,
         "logs": logs
     }
 

@@ -9,10 +9,12 @@ from supabase_client import supabase
 from services.auth_service import admin_required
 from services.game_service import (
     get_game_state, get_all_players, get_active_loans, get_player,
-    get_admin_events_for_month, get_pending_sales, validate_rpc_payload
+    get_admin_events_for_month, get_pending_sales, validate_rpc_payload,
+    get_market_scenario_row
 )
 from engine.monthly_processor import process_month_for_player
-from engine.market_engine import calculate_risk_score
+from engine.market_engine import calculate_risk_score, resolve_market_scenario
+from models.constants import MARKET_REGIMES
 from engine.scoring import calculate_financial_health_score
 from models.constants import TOTAL_MONTHS, LIFESTYLE_COSTS
 
@@ -101,6 +103,12 @@ def next_month():
 
     admin_events = get_admin_events_for_month(next_m)
 
+    # ── Resolve the month's market scenario ONCE, for everyone ──
+    # Admin-authored row wins; unauthored months fall back to the engine's
+    # correlated auto regime (or a flat month when auto_market is off).
+    scenario_row = get_market_scenario_row(next_m)
+    market_scenario = resolve_market_scenario(next_m, scenario_row, auto_market)
+
     # Accumulate batch operations
     updates_state = []
     updates_loans = []
@@ -123,7 +131,8 @@ def next_month():
             active_loans=active_loans,
             pending_sales=pending_sales,
             auto_events=auto_events,
-            auto_market=auto_market
+            auto_market=auto_market,
+            market_scenario=market_scenario
         )
 
         # Collect batch data
@@ -183,6 +192,7 @@ def next_month():
         return jsonify({
             "message": f"Success! Advanced to Month {next_m}.",
             "month": next_m,
+            "market": market_scenario,
             "players_processed": len(players),
             "events_triggered": len(all_event_summaries),
             "event_details": all_event_summaries[:20]  # Limit for response size
@@ -450,6 +460,101 @@ def update_player():
 # Both default OFF (manual control); admin flips them here. Emergency-fund
 # interest and salary/expenses/loans are the fixed baseline, always on.
 # --------------------------------------------------
+@admin_bp.route('/admin/market', methods=['GET'])
+@admin_required
+def list_market_scenarios():
+    """All authored scenarios + the preset regimes the admin can start from."""
+    try:
+        rows = supabase.table('market_scenarios').select('*').order('month').execute().data or []
+    except Exception as e:
+        return jsonify({"error": f"market_scenarios table missing? {e}"}), 500
+
+    presets = [{
+        "key": k,
+        "name": v["name"],
+        "reason": v["reason"],
+        "stock_pct_range": v["stock"],
+        "gold_pct_range": v["gold"],
+        # Midpoint is what the admin gets if they click the preset.
+        "stock_pct": round(sum(v["stock"]) / 2, 4),
+        "gold_pct": round(sum(v["gold"]) / 2, 4)
+    } for k, v in MARKET_REGIMES.items()]
+
+    return jsonify({"scenarios": rows, "presets": presets})
+
+
+@admin_bp.route('/admin/market', methods=['POST'])
+@admin_required
+def set_market_scenario():
+    """
+    Author (or overwrite) the market scenario for a month. One scenario drives BOTH
+    stocks and gold plus the reason shown to players, so 'war broke out, gold up,
+    stocks down' is a single authored row rather than two unrelated numbers.
+    """
+    d = request.json or {}
+    try:
+        month = int(d.get('month'))
+        stock_pct = float(d.get('stock_pct'))
+        gold_pct = float(d.get('gold_pct'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "month, stock_pct and gold_pct are required numbers."}), 400
+
+    if not (1 <= month <= TOTAL_MONTHS):
+        return jsonify({"error": f"month must be 1-{TOTAL_MONTHS}."}), 400
+
+    name = (d.get('name') or '').strip()
+    if not name:
+        return jsonify({"error": "Scenario name is required."}), 400
+    reason = (d.get('reason') or '').strip()
+    if not reason:
+        return jsonify({"error": "A reason is required — players must be told WHY the market moved."}), 400
+
+    # Sanity bound. A -95% month is almost always a misplaced decimal, and it would
+    # make the round unrecoverable for every player at once.
+    for label, v in (("stock_pct", stock_pct), ("gold_pct", gold_pct)):
+        if not (-0.60 <= v <= 0.60):
+            return jsonify({"error": f"{label} must be between -0.60 and 0.60 (i.e. -60% to +60%)."}), 400
+
+    row = {
+        "month": month, "name": name, "reason": reason,
+        "stock_pct": stock_pct, "gold_pct": gold_pct,
+        "regime": d.get('regime') or 'authored'
+    }
+    try:
+        supabase.table('market_scenarios').upsert(row, on_conflict='month').execute()
+    except Exception as e:
+        return jsonify({"error": f"Save failed: {e}"}), 500
+
+    return jsonify({"message": f"Month {month} market scenario saved.", "scenario": row})
+
+
+@admin_bp.route('/admin/market/<int:month>', methods=['DELETE'])
+@admin_required
+def del_market_scenario(month):
+    """Remove an authored scenario; the month reverts to the auto regime."""
+    try:
+        supabase.table('market_scenarios').delete().eq('month', month).execute()
+    except Exception as e:
+        return jsonify({"error": f"Delete failed: {e}"}), 500
+    return jsonify({"message": f"Month {month} scenario removed — falls back to auto."})
+
+
+@admin_bp.route('/admin/market/preview', methods=['GET'])
+@admin_required
+def preview_market():
+    """
+    Show the resolved 12-month market path exactly as the engine will run it,
+    so the admin can see the arc before the event instead of discovering it live.
+    """
+    game = get_game_state() or {}
+    auto_market = bool(game.get('auto_market', False))
+    out = []
+    for m in range(1, TOTAL_MONTHS + 1):
+        row = get_market_scenario_row(m)
+        out.append({"month": m, **resolve_market_scenario(m, row, auto_market)})
+    return jsonify({"auto_market": auto_market, "path": out})
+
+
 @admin_bp.route('/admin/settings', methods=['POST'])
 @admin_required
 def update_settings():

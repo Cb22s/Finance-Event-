@@ -277,6 +277,51 @@
             </div>
         </div>
 
+        <!-- Market Scenario Editor -->
+        <div class="glass-card" style="margin-top:1.25rem;">
+            <div class="section-header">
+                <div class="section-icon icon-info"><i class="fa-solid fa-chart-line"></i></div>
+                <div>
+                    <div class="section-title">Market Scenario</div>
+                    <div class="section-subtitle">One scenario per month moves BOTH stocks and gold, with a reason players see. Unauthored months fall back to the auto engine.</div>
+                </div>
+            </div>
+
+            <div style="margin-bottom:0.9rem;">
+                <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.4rem;">Start from a preset:</div>
+                <div id="marketPresets" style="display:flex; flex-wrap:wrap; gap:0.4rem;"></div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap:0.7rem;">
+                <label style="display:block;">
+                    <span style="font-size:0.75rem; color:var(--text-muted);">Month</span>
+                    <input type="number" min="1" max="12" value="2" id="mktMonth" class="input-glass" style="width:100%;">
+                </label>
+                <label style="display:block;">
+                    <span style="font-size:0.75rem; color:var(--text-muted);">Stocks %</span>
+                    <input type="number" step="0.5" value="-15" id="mktStock" class="input-glass" style="width:100%;">
+                </label>
+                <label style="display:block;">
+                    <span style="font-size:0.75rem; color:var(--text-muted);">Gold %</span>
+                    <input type="number" step="0.5" value="10" id="mktGold" class="input-glass" style="width:100%;">
+                </label>
+            </div>
+            <label style="display:block; margin-top:0.7rem;">
+                <span style="font-size:0.75rem; color:var(--text-muted);">Headline</span>
+                <input type="text" id="mktName" class="input-glass" style="width:100%;" placeholder="e.g. War in the Gulf">
+            </label>
+            <label style="display:block; margin-top:0.7rem;">
+                <span style="font-size:0.75rem; color:var(--text-muted);">Reason shown to players</span>
+                <textarea id="mktReason" class="input-glass" rows="2" style="width:100%;" placeholder="Why did the market move? e.g. War has broken out; investors are fleeing equities into gold."></textarea>
+            </label>
+            <button class="btn-primary" id="mktSave" style="margin-top:0.85rem; width:100%;">Save Scenario</button>
+
+            <div style="margin-top:1.1rem;">
+                <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.4rem;">Resolved 12-month path (what the engine will actually run):</div>
+                <div id="marketPath" style="font-size:0.8rem;"></div>
+            </div>
+        </div>
+
         <!-- Create Player -->
         <div class="glass-card" style="margin-top:1.25rem;">
             <div class="section-header">

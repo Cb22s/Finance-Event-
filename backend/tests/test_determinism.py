@@ -362,7 +362,11 @@ class TestSeedStability(unittest.TestCase):
 # seeded wrappers (or hashlib-based determinism, as game_service.fair_roll
 # uses, which needs no `random` import at all).
 ALLOWED_RANDOM_CALLERS = {
-    "market_engine.py": {"_seeded_rng"},
+    # _regime_rng is a second SEEDED wrapper (seed = sha256("GLOBAL:{month}:regime")),
+    # kept separate from _seeded_rng so that changing a magnitude draw cannot reshuffle
+    # which regime a month resolves to. Both are month-seeded and player-independent,
+    # which is the property this test actually guards (ADR-009).
+    "market_engine.py": {"_seeded_rng", "_regime_rng"},
     "event_engine.py": {"_seeded_random"},
 }
 

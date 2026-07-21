@@ -547,3 +547,104 @@ document.addEventListener('DOMContentLoaded', () => {
     mrEl.addEventListener('change', () => save('marriage_round_active', mrEl.checked));
     loadSettings();
 });
+
+
+// ============================================================================
+// MARKET SCENARIO EDITOR
+// One authored row per month drives stocks AND gold together, plus the reason
+// players are shown. Replaces the old model where the two moved independently
+// from unrelated RNG ranges and no cause was ever surfaced.
+// ============================================================================
+
+async function loadMarket() {
+    const presetWrap = document.getElementById('marketPresets');
+    const pathWrap = document.getElementById('marketPath');
+    if (!presetWrap) return;
+
+    try {
+        const res = await adminFetch(`${API_BASE_URL}/admin/market`);
+        const d = await res.json();
+        if (!res.ok) { presetWrap.innerHTML = `<span style="color:var(--accent-rose);">${d.error}</span>`; return; }
+
+        presetWrap.innerHTML = (d.presets || []).map(p =>
+            `<button class="btn-ghost" style="font-size:0.72rem; padding:0.3rem 0.6rem;"
+                     data-preset='${JSON.stringify(p).replace(/'/g, "&apos;")}'>${p.name}</button>`
+        ).join('');
+
+        presetWrap.querySelectorAll('button').forEach(b => {
+            b.addEventListener('click', () => {
+                const p = JSON.parse(b.getAttribute('data-preset').replace(/&apos;/g, "'"));
+                document.getElementById('mktName').value = p.name;
+                document.getElementById('mktReason').value = p.reason;
+                document.getElementById('mktStock').value = (p.stock_pct * 100).toFixed(1);
+                document.getElementById('mktGold').value = (p.gold_pct * 100).toFixed(1);
+            });
+        });
+    } catch (e) {
+        presetWrap.innerHTML = '<span style="color:var(--accent-rose);">Failed to load presets.</span>';
+    }
+
+    // Resolved path — shows exactly what each month will do, authored or auto.
+    try {
+        const res = await adminFetch(`${API_BASE_URL}/admin/market/preview`);
+        const d = await res.json();
+        if (!res.ok) return;
+        pathWrap.innerHTML = (d.path || []).map(m => {
+            const col = v => v > 0.0005 ? 'var(--accent-emerald)' : v < -0.0005 ? 'var(--accent-rose)' : 'var(--text-muted)';
+            const fmt = v => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
+            const tag = m.source === 'admin'
+                ? '<span style="color:var(--accent-primary);">authored</span>'
+                : m.source === 'flat' ? '<span style="color:var(--text-muted);">flat</span>'
+                : '<span style="color:var(--text-muted);">auto</span>';
+            const del = m.source === 'admin'
+                ? `<button class="btn-ghost" style="font-size:0.65rem; padding:0.1rem 0.4rem;" onclick="delMarket(${m.month})">clear</button>`
+                : '';
+            return `<div style="display:flex; gap:0.6rem; align-items:center; padding:0.25rem 0; border-bottom:1px solid rgba(255,255,255,0.04);">
+                <span style="width:34px; color:var(--text-muted);">M${m.month}</span>
+                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.name}</span>
+                <span style="width:58px; text-align:right; color:${col(m.stock_pct)};">${fmt(m.stock_pct)}</span>
+                <span style="width:58px; text-align:right; color:${col(m.gold_pct)};">${fmt(m.gold_pct)}</span>
+                <span style="width:60px; font-size:0.7rem;">${tag}</span>${del}
+            </div>`;
+        }).join('');
+    } catch (e) { /* preview is non-critical */ }
+}
+
+window.delMarket = async function (month) {
+    if (!confirm(`Clear the authored scenario for Month ${month}? It will fall back to auto.`)) return;
+    const res = await adminFetch(`${API_BASE_URL}/admin/market/${month}`, { method: 'DELETE' });
+    const d = await res.json();
+    alert(d.message || d.error);
+    loadMarket();
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('mktSave');
+    if (!btn) return;
+    loadMarket();
+
+    btn.addEventListener('click', async () => {
+        const payload = {
+            month: parseInt(document.getElementById('mktMonth').value, 10),
+            name: document.getElementById('mktName').value.trim(),
+            reason: document.getElementById('mktReason').value.trim(),
+            // UI collects whole percent; the API stores fractions.
+            stock_pct: (parseFloat(document.getElementById('mktStock').value) || 0) / 100,
+            gold_pct: (parseFloat(document.getElementById('mktGold').value) || 0) / 100
+        };
+        btn.disabled = true;
+        try {
+            const res = await adminFetch(`${API_BASE_URL}/admin/market`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const d = await res.json();
+            alert(d.message || d.error);
+            if (res.ok) loadMarket();
+        } catch (e) {
+            alert('Failed to save scenario.');
+        }
+        btn.disabled = false;
+    });
+});
