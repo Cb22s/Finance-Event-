@@ -44,6 +44,22 @@ STRATEGIES = {
 }
 
 
+try:
+    from supabase_client import supabase
+    db_events = supabase.table("events").select("*").execute().data or []
+    print(f"Loaded {len(db_events)} events from Supabase for the simulation.")
+except Exception as e:
+    print(f"Warning: Could not fetch events from database ({e}). Running simulation with hardcoded default behavior.")
+    db_events = []
+
+events_by_month = {}
+for ev in db_events:
+    m = ev.get("month")
+    if m not in events_by_month:
+        events_by_month[m] = []
+    events_by_month[m].append(ev)
+
+
 def expense_for(month, lifestyle="city"):
     base = LIFESTYLE_COSTS[lifestyle]["total"]
     if month < INFLATION_START_MONTH:
@@ -84,6 +100,29 @@ def simulate(archetype_name, strategy_name, market_on: bool, lifestyle="city"):
             stocks *= (1 + STOCK_BASE_GROWTH)
             gold *= (1 + GOLD_BASE_GROWTH)
         ef *= (1 + EMERGENCY_FUND_GROWTH)
+
+        # Apply database events for this month (mandatory global events)
+        for ev in events_by_month.get(month, []):
+            val = float(ev["value"])
+            target = ev["impact_target"]
+            etype = ev.get("event_type") or ev.get("type", "fixed")
+            
+            if etype == "percentage":
+                if target == "stocks":
+                    stocks += stocks * (val / 100)
+                elif target == "gold":
+                    gold += gold * (val / 100)
+                elif target == "cash":
+                    cash += cash * (val / 100)
+            elif etype == "fixed":
+                if target == "cash":
+                    cash += val
+                elif target == "stocks":
+                    stocks += val
+                elif target == "gold":
+                    gold += val
+                elif target == "expense_increase":
+                    cash -= abs(val)
 
         # spouse-contributed loan amortises simply over remaining months
         if loans > 0:
@@ -149,3 +188,4 @@ if __name__ == "__main__":
     s2 = run(market_on=False)
     print("\nNOTE: with market OFF, archetype value depends entirely on the market")
     print("events YOU author. Re-run this after the months 2-12 content pack exists.")
+
