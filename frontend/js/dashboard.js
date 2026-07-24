@@ -160,9 +160,15 @@ async function loadDashboard() {
         const p = data.player;
         const g = data.game;
 
-        // Game ended → leaderboard
+        // Game ended → celebrate, then leaderboard
         if (g && g.game_status === 'ended') {
-            window.location.href = 'leaderboard.html';
+            if (window.fx && !sessionStorage.getItem('mm_finale')) {
+                sessionStorage.setItem('mm_finale', '1');
+                fx.confetti(120);
+                setTimeout(() => { window.location.href = 'leaderboard.html'; }, 2200);
+            } else {
+                window.location.href = 'leaderboard.html';
+            }
             return;
         }
 
@@ -170,18 +176,27 @@ async function loadDashboard() {
         document.getElementById('monthBadge').innerText = `Month ${p.month}`;
         currentMonth = p.month;
 
-        // Net Worth
+        // Net Worth — animated counter with green/red flash and delta chip
         const nwEl = document.getElementById('netWorthVal');
-        nwEl.innerText = formatINR(p.net_worth);
+        if (window.fx) fx.animateValue('netWorthVal', p.net_worth);
+        else nwEl.innerText = formatINR(p.net_worth);
         if (p.net_worth < 0) nwEl.classList.add('negative');
         else nwEl.classList.remove('negative');
 
-        // Stats
-        document.getElementById('cashVal').innerText = formatINR(p.cash);
-        document.getElementById('stocksVal').innerText = formatINR(p.stocks);
-        document.getElementById('goldVal').innerText = formatINR(p.gold);
-        document.getElementById('emergencyVal').innerText = formatINR(p.emergency_fund);
-        document.getElementById('loanVal').innerText = formatINR(p.loans);
+        // Stats — animated
+        if (window.fx) {
+            fx.animateValue('cashVal', p.cash);
+            fx.animateValue('stocksVal', p.stocks);
+            fx.animateValue('goldVal', p.gold);
+            fx.animateValue('emergencyVal', p.emergency_fund);
+            fx.animateValue('loanVal', p.loans);
+        } else {
+            document.getElementById('cashVal').innerText = formatINR(p.cash);
+            document.getElementById('stocksVal').innerText = formatINR(p.stocks);
+            document.getElementById('goldVal').innerText = formatINR(p.gold);
+            document.getElementById('emergencyVal').innerText = formatINR(p.emergency_fund);
+            document.getElementById('loanVal').innerText = formatINR(p.loans);
+        }
         document.getElementById('pendingVal').innerText = formatINR(p.pending_cash_next_month || 0);
         document.getElementById('lifestyleVal').innerText = p.lifestyle_type === 'city' ? 'City' : 'Outer';
         document.getElementById('bikeVal').innerText = p.bike_status
@@ -219,6 +234,7 @@ async function loadDashboard() {
         renderAllocation(data.allocation, data.loan_info);
         renderLoans(data.loan_info);
         renderActionBanner(data.allocation, p);
+        renderInsurance(data.insurance);
 
         // ── Courtship & Marriage UI Render ──
         const courtshipSec = document.getElementById('courtshipSection');
@@ -302,21 +318,25 @@ async function loadDashboard() {
             if (data.choices.length === 0) {
                 optsCon.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No opportunities this month.</p>';
             } else {
-                optsCon.innerHTML = data.choices.map(c => `
-                    <div class="choice-card">
+                const riskColor = { low: 'var(--accent-emerald)', medium: 'var(--accent-amber)', high: 'var(--accent-rose)' };
+                const riskEmoji = { low: '🟢', medium: '🟡', high: '🔴' };
+                optsCon.innerHTML = data.choices.map(c => {
+                    const rc = riskColor[c.risk_type] || 'var(--accent-amber)';
+                    return `
+                    <div class="choice-card" style="border-left: 3px solid ${rc};">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
                             <span style="font-weight: 600; font-size: 0.9rem;">${c.name}</span>
-                            <span style="font-size: 0.75rem; color: var(--accent-amber); font-weight: 600;">Cost: ${formatINR(c.cost)}</span>
+                            <span style="font-size: 0.75rem; color: ${rc}; font-weight: 600;">${c.cost > 0 ? 'Cost: ' + formatINR(c.cost) : 'Free'}</span>
                         </div>
                         <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;">
-                            ${c.risk_type} • ${c.probability}% chance → ${formatINR(c.reward_value)} ${c.reward_type}
+                            ${riskEmoji[c.risk_type] || ''} ${c.risk_type} risk • ${c.probability}% chance → <strong style="color:${rc};">${formatINR(c.reward_value)}</strong> ${c.reward_type}
                         </p>
-                        <button class="btn-ghost" style="width: 100%; font-size: 0.8rem; padding: 0.4rem; border-color: rgba(245,158,11,0.3); color: var(--accent-amber);"
+                        <button class="btn-ghost" style="width: 100%; font-size: 0.8rem; padding: 0.4rem; border-color: ${rc}; color: ${rc};"
                                 onclick="buyOptionalChoice(${c.id})">
                             <i class="fa-solid fa-dice"></i> Take Chance
                         </button>
-                    </div>
-                `).join('');
+                    </div>`;
+                }).join('');
             }
         }
 
@@ -338,18 +358,10 @@ async function loadDashboard() {
         }
 
         // ── Trust Scores from Supabase ──
-        try {
-            const { data: scores } = await window.supabase.from('player_relative_score')
-                .select('*')
-                .eq('user_id', currentUser.id);
+        // Trust / relative scores were removed with the Social Investment panel.
+        // The trustPoor / trustRich elements no longer exist, so this fetch-and-write
+        // has been deleted rather than left to throw on every dashboard poll.
 
-            if (scores) {
-                scores.forEach(s => {
-                    if (s.relative_type === 'poor') document.getElementById('trustPoor').innerText = s.trust_score;
-                    if (s.relative_type === 'rich') document.getElementById('trustRich').innerText = s.trust_score;
-                });
-            }
-        } catch (e) { /* non-critical */ }
 
         // ── UI Lock State ──
         const actionButtons = document.querySelectorAll('.sell-btn, .choice-card button, #relativeContainer button');
@@ -459,6 +471,8 @@ window.buyOptionalChoice = async function(id) {
         const data = await res.json();
         if (res.ok) {
             showToast(data.message, data.success ? 'success' : 'info');
+            // A win pays off — celebrate. A loss — nothing, the sting is enough.
+            if (window.fx && data.success) fx.confetti(60);
         } else {
             showToast(data.error, 'error');
         }
@@ -542,7 +556,16 @@ function _formatRevealedTrait(archetype_id, trait_key) {
 // V2 UI — market news, monthly allocation, loans
 // ============================================================================
 
-const ALLOC_IDS = ['allocStocks', 'allocGold', 'allocEf', 'allocPrepay', 'allocKeep'];
+// 'allocKeep' is gone: the server now derives kept cash as the residual, so there
+// is nothing for the player to balance and nothing to get wrong.
+const ALLOC_IDS = ['allocStocks', 'allocGold', 'allocEf', 'allocPrepay'];
+
+// The exact server-side value, held as a NUMBER. Never re-read from the rendered
+// string: formatINR uses Math.floor while the backend rounds, so 8117.51 displayed
+// as "8,117" and re-parsed as 8117 was 0.51 away from the server's 8118 and failed
+// the "allocate exactly" check with no way for the player to satisfy it.
+let allocAvailableRaw = 0;
+let _lastSeenMonth = null;
 const LOAN_IDS = ['loanAmount', 'loanTerm'];
 
 // True while the player has focus in any input they are mid-way through filling.
@@ -576,6 +599,15 @@ function renderMarketNews(market, month) {
     document.getElementById('marketName').innerText = market.name || 'Market Update';
     document.getElementById('marketMonth').innerText = `Month ${month}`;
     document.getElementById('marketReason').innerText = market.reason || '';
+
+    // Fire dramatic feedback ONLY when the month actually advances, so the 5s
+    // poll doesn't re-trigger the animation every tick.
+    if (window.fx && _lastSeenMonth !== null && month !== _lastSeenMonth) {
+        fx.revealEvent('marketNews');
+        if (market.stock_pct <= -0.10) fx.shake('marketNews');       // crash / war
+        else if (market.stock_pct >= 0.08) fx.celebrate('marketNews'); // strong bull
+    }
+    _lastSeenMonth = month;
 
     const sEl = document.getElementById('marketStockPct');
     const gEl = document.getElementById('marketGoldPct');
@@ -613,8 +645,8 @@ function renderAllocation(alloc, loanInfo) {
     }
     sec.style.display = 'block';
 
-    const available = alloc.available_cash;
-    document.getElementById('allocAvailable').innerText = formatINR(available);
+    allocAvailableRaw = Number(alloc.available_cash) || 0;
+    document.getElementById('allocAvailable').innerText = formatINR(allocAvailableRaw);
 
     // Cap the repay field at what is actually owed.
     const outstanding = (loanInfo && loanInfo.outstanding) || 0;
@@ -640,24 +672,20 @@ function allocTotal() {
 }
 
 function recalcAllocation() {
-    const availEl = document.getElementById('allocAvailable');
-    if (!availEl) return;
-    const available = parseFloat(availEl.innerText.replace(/[^0-9.-]/g, '')) || 0;
-    const total = allocTotal();
-    const diff = available - total;
-
     const msg = document.getElementById('allocRemaining');
     const btn = document.getElementById('allocSubmit');
+    if (!msg || !btn) return;
 
-    if (Math.abs(diff) < 0.5) {
-        msg.innerHTML = '<span style="color: var(--accent-emerald);">✓ Fully allocated</span>';
-        btn.disabled = false;
-    } else if (diff > 0) {
-        msg.innerHTML = `<span style="color: var(--accent-amber);">${formatINR(diff)} still unallocated</span>`;
+    const invested = allocTotal();
+    const remainder = allocAvailableRaw - invested;
+
+    // Only ONE way to fail now: trying to invest more than you have.
+    if (remainder < -1) {
+        msg.innerHTML = `<span style="color: var(--accent-rose);">Over by ${formatINR(Math.abs(remainder))}</span>`;
         btn.disabled = true;
     } else {
-        msg.innerHTML = `<span style="color: var(--accent-rose);">Over by ${formatINR(Math.abs(diff))}</span>`;
-        btn.disabled = true;
+        msg.innerHTML = `<span style="color: var(--text-muted);">Remaining stays as cash: <strong style="color: var(--accent-emerald);">${formatINR(Math.max(0, remainder))}</strong></span>`;
+        btn.disabled = false;
     }
 }
 
@@ -737,16 +765,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (el) el.addEventListener('input', recalcAllocation);
     });
 
-    const restBtn = document.getElementById('allocRestBtn');
-    if (restBtn) restBtn.addEventListener('click', () => {
-        const available = parseFloat(
-            document.getElementById('allocAvailable').innerText.replace(/[^0-9.-]/g, '')) || 0;
-        const others = ALLOC_IDS.filter(i => i !== 'allocKeep')
-            .reduce((s, i) => s + (parseFloat(document.getElementById(i).value) || 0), 0);
-        document.getElementById('allocKeep').value = Math.max(0, Math.round(available - others));
-        recalcAllocation();
-    });
-
     const allocBtn = document.getElementById('allocSubmit');
     if (allocBtn) allocBtn.addEventListener('click', submitAllocation);
 
@@ -767,8 +785,7 @@ async function submitAllocation() {
         stocks: parseFloat(document.getElementById('allocStocks').value) || 0,
         gold: parseFloat(document.getElementById('allocGold').value) || 0,
         emergency_fund: parseFloat(document.getElementById('allocEf').value) || 0,
-        loan_prepay: parseFloat(document.getElementById('allocPrepay').value) || 0,
-        keep_cash: parseFloat(document.getElementById('allocKeep').value) || 0
+        loan_prepay: parseFloat(document.getElementById('allocPrepay').value) || 0
     };
     try {
         const res = await fetch(`${API_BASE_URL}/allocate-month`, {
@@ -813,4 +830,48 @@ async function submitLoan() {
         showToast('Failed to connect to server', 'error');
     }
     btn.disabled = false;
+}
+
+
+// ── INSURANCE (replaces the removed Social Investment / trust mechanic) ──────
+function renderInsurance(ins) {
+    const wrap = document.getElementById('insuranceOptions');
+    if (!wrap || !ins) return;
+
+    wrap.innerHTML = ins.plans.map(p => {
+        const selected = p.id === ins.current;
+        return `<button class="choice-card" data-plan="${p.id}"
+                    style="text-align:left; cursor:pointer; width:100%;
+                           border:1px solid ${selected ? 'var(--accent-emerald)' : 'var(--border-glass)'};
+                           background:${selected ? 'rgba(16,185,129,0.08)' : 'transparent'};">
+            <div style="font-weight:600; font-size:0.9rem; display:flex; justify-content:space-between; gap:0.5rem;">
+                <span>${p.name}</span>
+                ${selected ? '<span style="color:var(--accent-emerald); font-size:0.75rem;">✓ Active</span>' : ''}
+            </div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.35rem;">${p.description}</div>
+        </button>`;
+    }).join('');
+
+    wrap.querySelectorAll('button[data-plan]').forEach(b => {
+        b.addEventListener('click', () => setInsurance(b.getAttribute('data-plan')));
+    });
+}
+
+async function setInsurance(plan) {
+    try {
+        const res = await fetch(`${API_BASE_URL}/insurance`, {
+            method: 'POST',
+            headers: await getAuthHeaders(),
+            body: JSON.stringify({ plan })
+        });
+        const d = await res.json();
+        if (res.ok) {
+            showToast(d.message, 'success');
+            await loadDashboard();
+        } else {
+            showToast(d.error || 'Could not change cover', 'error');
+        }
+    } catch (e) {
+        showToast('Failed to connect to server', 'error');
+    }
 }

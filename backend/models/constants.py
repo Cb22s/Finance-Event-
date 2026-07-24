@@ -268,3 +268,39 @@ MARKET_REGIMES = {
 # instead of being a fresh coin flip each month.
 POST_SHOCK_REGIMES = ["recovery", "steady", "correction"]
 SHOCK_REGIMES = ["war", "crash"]
+
+
+# ──── INSURANCE (replaces Social Investment / trust, 2026-07-21) ────
+# Trust score was removed from the player UI: it cost real money, fed almost
+# nothing into the ADR-008 leaderboard score, and taught no financial lesson.
+# Insurance replaces it because it is in the PRD, it is a genuine risk-management
+# decision, and it gives the risk_protection score component a lever the player
+# can actually pull.
+#
+# The trade is deliberately uncomfortable: premiums are a GUARANTEED small loss
+# every month against an UNCERTAIN large loss. A player who buys cover and is
+# never hit has "wasted" money — and that is exactly the lesson.
+INSURANCE_PLANS = {
+    "none": {
+        "name": "No Cover",
+        "premium": 0,
+        "emergency_coverage": 0.0,
+        "description": "No premium. You absorb the full cost of any emergency."
+    },
+    "basic": {
+        "name": "Basic Health Cover",
+        "premium": 2500,
+        "emergency_coverage": 0.50,
+        "description": "Rs2,500/month. Covers 50% of any medical or emergency event."
+    },
+    "comprehensive": {
+        "name": "Comprehensive Health + Life",
+        "premium": 6000,
+        "emergency_coverage": 0.80,
+        "description": "Rs6,000/month. Covers 80% of any medical or emergency event."
+    }
+}
+
+# Which event categories insurance pays out against. Market losses are NOT
+# insurable — a player cannot buy protection from their own portfolio choices.
+INSURABLE_CATEGORIES = {"emergency", "medical"}

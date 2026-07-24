@@ -22,13 +22,19 @@
         @media (max-width: 900px) {
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
         }
+        details > summary::-webkit-details-marker { display: none; }
+        details[open] > summary .fa-chevron-down { transform: rotate(180deg); }
+        details > summary .fa-chevron-down { transition: transform 0.2s; }
         .two-col {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 1.25rem;
         }
         @media (max-width: 900px) {
-            .two-col { grid-template-columns: 1fr; }
+            details > summary::-webkit-details-marker { display: none; }
+        details[open] > summary .fa-chevron-down { transform: rotate(180deg); }
+        details > summary .fa-chevron-down { transition: transform 0.2s; }
+        .two-col { grid-template-columns: 1fr; }
         }
         .event-scroll {
             max-height: 350px;
@@ -82,8 +88,8 @@
                 <span id="riskBadge" style="font-size: 0.75rem; color: var(--text-muted);">
                     <i class="fa-solid fa-gauge"></i> Risk: <span id="riskVal">—</span>
                 </span>
-                <span id="trustBadge" style="font-size: 0.75rem; color: var(--text-muted);">
-                    <i class="fa-solid fa-handshake"></i> Trust: <span id="trustVal">0</span>
+                <span id="trustBadge" style="display:none;">
+                    <span id="trustVal">0</span>
                 </span>
             </div>
         </div>
@@ -183,7 +189,7 @@
                 <div class="section-icon icon-primary"><i class="fa-solid fa-scale-balanced"></i></div>
                 <div>
                     <div class="section-title">Allocate This Month's Cash</div>
-                    <div class="section-subtitle">Distribute every rupee before you can end the round.</div>
+                    <div class="section-subtitle">Invest what you want. Anything left over simply stays as cash.</div>
                 </div>
             </div>
 
@@ -210,28 +216,27 @@
                     <span style="font-size:0.8rem; color:var(--text-muted);"><i class="fa-solid fa-hand-holding-dollar" style="margin-right:0.35rem;"></i>Repay Loan <span id="allocPrepayMax" style="color:var(--text-muted);"></span></span>
                     <input type="number" min="0" step="1000" value="0" id="allocPrepay" class="input-glass alloc-input" style="width:100%; margin-top:0.4rem;">
                 </label>
-                <label class="choice-card" style="display:block;">
-                    <span style="font-size:0.8rem; color:var(--text-muted);"><i class="fa-solid fa-wallet" style="margin-right:0.35rem;"></i>Keep as Cash</span>
-                    <input type="number" min="0" step="1000" value="0" id="allocKeep" class="input-glass alloc-input" style="width:100%; margin-top:0.4rem;">
-                </label>
             </div>
 
             <div style="display:flex; gap:0.75rem; margin-top:1.25rem; flex-wrap:wrap;">
-                <button class="btn-ghost" id="allocRestBtn" style="font-size:0.8rem;">Put remainder in cash</button>
-                <button class="btn-primary" id="allocSubmit" style="flex:1; min-width:180px;" disabled>Confirm Allocation</button>
+                <button class="btn-primary" id="allocSubmit" style="flex:1; min-width:180px;">Confirm Allocation</button>
             </div>
         </div>
 
-        <!-- ══ LOANS ══
-             The dashboard previously displayed a loan BALANCE with no way to borrow. -->
-        <div id="loanSection" class="glass-card mb-section animate-fade-in-up" style="display:none;">
-            <div class="section-header">
-                <div class="section-icon icon-danger" style="background: rgba(244,63,94,0.1); color: var(--accent-rose);"><i class="fa-solid fa-building-columns"></i></div>
-                <div>
-                    <div class="section-title">Loans</div>
-                    <div class="section-subtitle" id="loanSubtitle">Borrow to seize an opportunity — repay with interest every month.</div>
+        <!-- ══ LOANS (secondary — collapsed by default) ══ -->
+        <details id="loanSection" class="glass-card mb-section" style="display:none; padding:1.25rem;">
+            <summary style="cursor:pointer; list-style:none;">
+                <div class="section-header" style="margin-bottom:0;">
+                    <div class="section-icon icon-danger" style="background: rgba(244,63,94,0.1); color: var(--accent-rose);"><i class="fa-solid fa-building-columns"></i></div>
+                    <div style="flex:1;">
+                        <div class="section-title">Loans</div>
+                        <div class="section-subtitle" id="loanSubtitle">Borrow to seize an opportunity — repay with interest every month.</div>
+                    </div>
+                    <i class="fa-solid fa-chevron-down" style="color: var(--text-muted);"></i>
                 </div>
-            </div>
+            </summary>
+
+            <div style="margin-top:1.25rem;">
 
             <div id="loanList" style="margin-bottom:1rem;"></div>
 
@@ -251,7 +256,8 @@
                 <button class="btn-primary" id="loanSubmit" style="height:42px;">Take Loan</button>
             </div>
             <div id="loanQuote" style="font-size:0.85rem; color: var(--text-muted); margin-top:0.85rem;"></div>
-        </div>
+            </div>
+        </details>
 
         <!-- ── Courtship & Marriage (Month 6 Special Event) ── -->
         <div id="courtshipSection" class="glass-card mb-section animate-fade-in-up" style="display: none;">
@@ -278,62 +284,44 @@
             </div>
         </div>
 
-        <!-- ── Two Column: Social + Choices ── -->
-        <div class="two-col mb-section">
+        <!-- ══ MORE OPTIONS (collapsed) ══
+             Loans, selling and optional choices are secondary. They used to sit
+             permanently expanded alongside the primary decision, which is what made
+             the page feel complicated: four panels competing for attention with no
+             indication of which one the player actually had to act on. -->
+        <details id="moreOptions" class="glass-card mb-section" style="padding:1.25rem;">
+            <summary style="cursor:pointer; list-style:none; display:flex; align-items:center; gap:0.75rem;">
+                <div class="section-icon icon-warning" style="flex-shrink:0;"><i class="fa-solid fa-ellipsis"></i></div>
+                <div style="flex:1;">
+                    <div class="section-title">More Options</div>
+                    <div class="section-subtitle">Insurance, loans, and opportunities — optional</div>
+                </div>
+                <i class="fa-solid fa-chevron-down" style="color: var(--text-muted);"></i>
+            </summary>
 
-            <!-- Social Investment -->
-            <div class="glass-card animate-fade-in-up">
-                <div class="section-header">
-                    <div class="section-icon icon-primary"><i class="fa-solid fa-people-group"></i></div>
-                    <div>
-                        <div class="section-title">Social Investment</div>
-                        <div class="section-subtitle">Help relatives → build trust → unlock bonuses</div>
+            <div style="margin-top:1.25rem;">
+                <!-- Insurance (replaces Social Investment) -->
+                <div style="margin-bottom:1.5rem;">
+                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.3rem;">
+                        <i class="fa-solid fa-shield-heart" style="margin-right:0.4rem; color: var(--accent-emerald);"></i>Insurance Cover
                     </div>
+                    <div style="font-size:0.8rem; color: var(--text-muted); margin-bottom:0.85rem;">
+                        A guaranteed small cost each month against an uncertain large one. Does not cover market losses.
+                    </div>
+                    <div id="insuranceOptions" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:0.7rem;"></div>
                 </div>
 
-                <div id="relativeContainer">
-                    <!-- Poor Relative -->
-                    <div class="choice-card">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                            <span style="font-weight: 600; font-size: 0.95rem;"><i class="fa-solid fa-heart-pulse text-rose" style="margin-right:0.4rem;"></i>Poor Family Emergency</span>
-                            <span style="font-size: 0.75rem; color: var(--text-muted);">Trust: <span id="trustPoor" style="color: var(--accent-primary);">0</span></span>
-                        </div>
-                        <div style="display: flex; gap: 0.5rem;">
-                            <button class="btn-ghost" style="flex:1; font-size:0.8rem; padding:0.4rem;" onclick="handleRelative('poor','none')">Skip</button>
-                            <button class="btn-ghost" style="flex:1; font-size:0.8rem; padding:0.4rem; border-color: rgba(6,182,212,0.3); color: var(--accent-cyan);" onclick="handleRelative('poor','medium')">₹2K Help</button>
-                            <button class="btn-ghost" style="flex:1; font-size:0.8rem; padding:0.4rem; border-color: rgba(16,185,129,0.3); color: var(--accent-emerald);" onclick="handleRelative('poor','high')">₹5K Help</button>
-                        </div>
+                <!-- Optional Choices -->
+                <div id="optionalChoicesWrap">
+                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.85rem;">
+                        <i class="fa-solid fa-dice" style="margin-right:0.4rem; color: var(--accent-amber);"></i>Opportunities
                     </div>
-
-                    <!-- Rich Relative -->
-                    <div class="choice-card">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                            <span style="font-weight: 600; font-size: 0.95rem;"><i class="fa-solid fa-champagne-glasses text-amber" style="margin-right:0.4rem;"></i>Rich Relative Party</span>
-                            <span style="font-size: 0.75rem; color: var(--text-muted);">Trust: <span id="trustRich" style="color: var(--accent-primary);">0</span></span>
-                        </div>
-                        <div style="display: flex; gap: 0.5rem;">
-                            <button class="btn-ghost" style="flex:1; font-size:0.8rem; padding:0.4rem;" onclick="handleRelative('rich','none')">Skip</button>
-                            <button class="btn-ghost" style="flex:1; font-size:0.8rem; padding:0.4rem; border-color: rgba(6,182,212,0.3); color: var(--accent-cyan);" onclick="handleRelative('rich','medium')">₹2K Gift</button>
-                            <button class="btn-ghost" style="flex:1; font-size:0.8rem; padding:0.4rem; border-color: rgba(16,185,129,0.3); color: var(--accent-emerald);" onclick="handleRelative('rich','high')">₹5K Gift</button>
-                        </div>
+                    <div id="optionalChoicesContainer">
+                        <p style="color: var(--text-muted); font-size: 0.9rem;">No opportunities this month.</p>
                     </div>
                 </div>
             </div>
-
-            <!-- Optional Choices -->
-            <div class="glass-card animate-fade-in-up">
-                <div class="section-header">
-                    <div class="section-icon icon-warning"><i class="fa-solid fa-dice"></i></div>
-                    <div>
-                        <div class="section-title">Optional Choices</div>
-                        <div class="section-subtitle">High risk, high reward opportunities</div>
-                    </div>
-                </div>
-                <div id="optionalChoicesContainer">
-                    <p style="color: var(--text-muted); font-size: 0.9rem;">No opportunities this month.</p>
-                </div>
-            </div>
-        </div>
+        </details>
 
         <!-- ── Event History ── -->
         <div class="glass-card mb-section animate-fade-in-up">
@@ -368,6 +356,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./js/config.js"></script>
+    <script src="./js/effects.js"></script>
     <script src="./js/dashboard.js"></script>
 </body>
 </html>

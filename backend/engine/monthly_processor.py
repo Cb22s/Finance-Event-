@@ -8,7 +8,7 @@ from models.constants import (
     MONTHLY_INCOME, LIFESTYLE_COSTS, BIKE_EMI,
     LOAN_INTEREST_RATE, AUTO_LOAN_INTEREST_RATE, LOAN_TERM_MONTHS,
     INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH,
-    ARCHETYPES, SPOUSE_BASE_EXPENSE
+    ARCHETYPES, SPOUSE_BASE_EXPENSE, INSURANCE_PLANS, INSURABLE_CATEGORIES
 )
 
 
@@ -141,6 +141,16 @@ def process_month_for_player(player: dict, month: int,
         event_log.append(f"🏠 Living expenses: -{exp_desc}")
 
     # ════════════════════════════════════════════
+    # STEP 2b: INSURANCE PREMIUM
+    # A guaranteed small monthly loss bought against an uncertain large one.
+    # ════════════════════════════════════════════
+    plan_id = player.get('insurance_plan') or 'none'
+    plan = INSURANCE_PLANS.get(plan_id, INSURANCE_PLANS['none'])
+    if plan['premium'] > 0:
+        cash -= plan['premium']
+        event_log.append(f"🛡️ Insurance premium ({plan['name']}): -₹{plan['premium']:,}")
+
+    # ════════════════════════════════════════════
     # STEP 3: PENDING ASSET SALE CREDITS
     # (Already credited in STEP 0 above — the route passes pending_sales to the
     #  engine, which applies them before salary/expenses. This header is kept
@@ -168,7 +178,9 @@ def process_month_for_player(player: dict, month: int,
     events = generate_events_for_player(temp_player, month, admin_events, auto_events)
     events_triggered = events
 
+    coverage = plan['emergency_coverage']
     for event in events:
+        cash_before = cash
         result = apply_event_to_state(
             event, cash, stocks, gold, emergency_fund, trust_score
         )
@@ -178,6 +190,20 @@ def process_month_for_player(player: dict, month: int,
         emergency_fund = result['emergency_fund']
         trust_score = result['trust_score']
         event_log.append(result['log'])
+
+        # ── INSURANCE PAYOUT ──
+        # Reimburses a share of CASH losses from insurable categories only.
+        # Market moves are deliberately uninsurable: you cannot buy protection
+        # from your own portfolio decisions, only from misfortune.
+        if coverage > 0 and event.get('category') in INSURABLE_CATEGORIES:
+            loss = cash_before - cash
+            if loss > 0:
+                payout = round(loss * coverage, 2)
+                cash += payout
+                event_log.append(
+                    f"🛡️ Insurance paid out ₹{payout:,.0f} "
+                    f"({int(coverage*100)}% of ₹{loss:,.0f})"
+                )
 
     # ════════════════════════════════════════════
     # STEP 6: BIKE EMI
@@ -328,6 +354,7 @@ def process_month_for_player(player: dict, month: int,
         "discipline_score": discipline_avg,
         "financial_health_score": score_result['score'],
         "spouse_archetype": spouse_arch_id,
+        "insurance_plan": plan_id,
         "status": "active"
     }
 

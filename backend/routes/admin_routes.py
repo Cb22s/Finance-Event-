@@ -15,6 +15,7 @@ from services.game_service import (
 from engine.monthly_processor import process_month_for_player
 from engine.market_engine import calculate_risk_score, resolve_market_scenario
 from models.constants import MARKET_REGIMES
+from models.news_library import list_events, get_event, events_by_category
 from engine.scoring import calculate_financial_health_score
 from models.constants import TOTAL_MONTHS, LIFESTYLE_COSTS
 
@@ -481,6 +482,66 @@ def list_market_scenarios():
     } for k, v in MARKET_REGIMES.items()]
 
     return jsonify({"scenarios": rows, "presets": presets})
+
+
+@admin_bp.route('/admin/news', methods=['GET'])
+@admin_required
+def list_news():
+    """
+    The curated real-world news library, grouped by category, for the admin picker.
+    Each entry carries the real headline, real date, the actual historical impact,
+    and the lesson it teaches — so a round can be framed as a case study rather
+    than as an arbitrary percentage.
+    """
+    return jsonify({
+        "events": list_events(),
+        "by_category": events_by_category()
+    })
+
+
+@admin_bp.route('/admin/news/apply', methods=['POST'])
+@admin_required
+def apply_news():
+    """
+    Apply a library news event to a month. This writes a normal market_scenarios
+    row, so the engine path is identical whether the admin used the library, a
+    preset, or hand-typed numbers — one code path, one source of truth.
+    """
+    d = request.json or {}
+    key = d.get('key')
+    try:
+        month = int(d.get('month'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "month is required."}), 400
+
+    ev = get_event(key)
+    if not ev:
+        return jsonify({"error": f"Unknown news event '{key}'."}), 400
+    if not (1 <= month <= TOTAL_MONTHS):
+        return jsonify({"error": f"month must be 1-{TOTAL_MONTHS}."}), 400
+
+    # The player-facing reason bundles the real context with the real historical
+    # outcome, which is what makes this a case study instead of a random shock.
+    reason = f"{ev['context']}\n\nWhat actually happened: {ev['real_note']}"
+
+    row = {
+        "month": month,
+        "name": f"{ev['headline']} ({ev['date']})",
+        "reason": reason,
+        "stock_pct": ev['stock_pct'],
+        "gold_pct": ev['gold_pct'],
+        "regime": f"news:{key}"
+    }
+    try:
+        supabase.table('market_scenarios').upsert(row, on_conflict='month').execute()
+    except Exception as e:
+        return jsonify({"error": f"Save failed: {e}"}), 500
+
+    return jsonify({
+        "message": f"Month {month}: {ev['headline']}",
+        "scenario": row,
+        "lesson": ev['lesson']
+    })
 
 
 @admin_bp.route('/admin/market', methods=['POST'])

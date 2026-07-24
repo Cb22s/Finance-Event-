@@ -648,3 +648,62 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.disabled = false;
     });
 });
+
+
+// ============================================================================
+// REAL-WORLD NEWS PICKER
+// Curated historical events. Selecting one fills the scenario form with the real
+// headline, the real context, and the impact that actually occurred.
+// ============================================================================
+
+let NEWS_CACHE = [];
+
+async function loadNews() {
+    const picker = document.getElementById('newsPicker');
+    if (!picker) return;
+    try {
+        const res = await adminFetch(`${API_BASE_URL}/admin/news`);
+        const d = await res.json();
+        if (!res.ok) return;
+        NEWS_CACHE = d.events || [];
+
+        const byCat = d.by_category || {};
+        picker.innerHTML = '<option value="">— choose a real event —</option>' +
+            Object.keys(byCat).sort().map(cat =>
+                `<optgroup label="${cat.toUpperCase()}">` +
+                byCat[cat].map(e =>
+                    `<option value="${e.key}">${e.date} — ${e.headline}</option>`
+                ).join('') + '</optgroup>'
+            ).join('');
+    } catch (e) { /* picker is optional */ }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const picker = document.getElementById('newsPicker');
+    if (!picker) return;
+    loadNews();
+
+    picker.addEventListener('change', () => {
+        const ev = NEWS_CACHE.find(e => e.key === picker.value);
+        const detail = document.getElementById('newsDetail');
+        if (!ev) { detail.innerHTML = ''; return; }
+
+        document.getElementById('mktName').value = `${ev.headline} (${ev.date})`;
+        document.getElementById('mktReason').value =
+            `${ev.context}\n\nWhat actually happened: ${ev.real_note}`;
+        document.getElementById('mktStock').value = (ev.stock_pct * 100).toFixed(1);
+        document.getElementById('mktGold').value = (ev.gold_pct * 100).toFixed(1);
+
+        const col = v => v >= 0 ? 'var(--accent-emerald)' : 'var(--accent-rose)';
+        const fmt = v => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
+        detail.innerHTML =
+            `<div style="padding:0.6rem 0.75rem; border-radius:8px; background:rgba(255,255,255,0.03);">
+                <div style="margin-bottom:0.35rem;">
+                    Stocks <strong style="color:${col(ev.stock_pct)}">${fmt(ev.stock_pct)}</strong> ·
+                    Gold <strong style="color:${col(ev.gold_pct)}">${fmt(ev.gold_pct)}</strong>
+                </div>
+                <div style="margin-bottom:0.35rem;"><em>${ev.real_note}</em></div>
+                <div style="color:var(--accent-primary);">Lesson: ${ev.lesson}</div>
+            </div>`;
+    });
+});

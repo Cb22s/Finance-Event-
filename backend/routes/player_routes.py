@@ -16,7 +16,7 @@ from models.constants import (
     INITIAL_BUDGET, SELL_PENALTY_RATE, TRUST_HELP_AMOUNTS, TRUST_SCORE_GAIN,
     LIFESTYLE_COSTS, ARCHETYPES, WEDDING_COST, SPOUSE_BASE_EXPENSE, MARRIAGE_MONTH,
     MONTHLY_INCOME, LOAN_INTEREST_RATE, LOAN_TERM_OPTIONS, LOAN_MIN_AMOUNT,
-    MAX_TOTAL_DEBT_MULTIPLE, MAX_EMI_TO_INCOME
+    MAX_TOTAL_DEBT_MULTIPLE, MAX_EMI_TO_INCOME, INSURANCE_PLANS
 )
 from engine.monthly_processor import _amortized_emi
 from engine.scoring import calculate_financial_health_score
@@ -253,7 +253,11 @@ def get_dashboard():
         "courtship": courtship,
         "market": market,
         "loan_info": loan_info,
-        "allocation": allocation
+        "allocation": allocation,
+        "insurance": {
+            "current": player.get('insurance_plan') or 'none',
+            "plans": [{"id": k, **v} for k, v in INSURANCE_PLANS.items()]
+        }
     })
 
 
@@ -295,20 +299,33 @@ def allocate_month():
         to_gold = float(data.get('gold', 0))
         to_ef = float(data.get('emergency_fund', 0))
         to_prepay = float(data.get('loan_prepay', 0))
-        keep_cash = float(data.get('keep_cash', 0))
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid numerical data."}), 400
 
-    buckets = [to_stocks, to_gold, to_ef, to_prepay, keep_cash]
+    buckets = [to_stocks, to_gold, to_ef, to_prepay]
     if any(v < 0 for v in buckets):
         return jsonify({"error": "Allocation values cannot be negative."}), 400
 
-    total = sum(buckets)
-    if abs(total - available) > 0.5:
+    # ── Money conservation by CONSTRUCTION ────────────────────────────────────
+    # Whatever the player does not invest simply stays as cash. The server derives
+    # the residual instead of requiring the client to send a `keep_cash` that sums
+    # to exactly `available`.
+    #
+    # The old "must total exactly" rule was unshippable: `cash` carries decimals
+    # from market growth (e.g. 8117.51), the frontend rendered it with Math.floor
+    # (8,117) while the backend rendered it with round() (8,118), and the client
+    # re-parsed its own DISPLAYED string back into a number. The player allocated
+    # every rupee the screen showed them and still got
+    # "Must allocate exactly ... 8,118 / current total 8,117" with no way to win.
+    # Deriving the remainder here removes the whole class of bug AND the rule the
+    # player had to satisfy.
+    invested = sum(buckets)
+    if invested > available + 1.0:
         return jsonify({
-            "error": f"Must allocate exactly your available cash of "
-                     f"₹{available:,.0f}. Current total: ₹{total:,.0f}"
+            "error": f"You allocated ₹{invested:,.0f} but only have ₹{available:,.0f} available."
         }), 400
+
+    keep_cash = max(0.0, available - invested)
 
     # ── Loan prepayment: cannot prepay more than is outstanding ──
     active_loans = get_active_loans(user_id)
@@ -380,6 +397,46 @@ def allocate_month():
             "stocks": to_stocks, "gold": to_gold, "emergency_fund": to_ef,
             "loan_prepay": to_prepay, "kept_as_cash": keep_cash
         }
+    })
+
+
+# ──────────────────────────────────────────────
+# INSURANCE — buy / change / cancel cover
+# Replaces the Social Investment (trust) mechanic, which cost the player real
+# money while contributing almost nothing to the ADR-008 score and teaching no
+# financial lesson. Insurance is a genuine risk-management decision.
+# ──────────────────────────────────────────────
+@player_bp.route('/insurance', methods=['POST'])
+def set_insurance():
+    user_id = get_user_id(request)
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    game = get_game_state()
+    if not game or game['game_status'] != 'active':
+        return jsonify({"error": "Game is not currently active."}), 400
+
+    player = get_player(user_id)
+    if not player:
+        return jsonify({"error": "No player state found."}), 404
+
+    plan_id = (request.json or {}).get('plan', 'none')
+    if plan_id not in INSURANCE_PLANS:
+        return jsonify({"error": f"Unknown plan. Choose one of {list(INSURANCE_PLANS)}."}), 400
+
+    try:
+        supabase.table('player_state').update({
+            "insurance_plan": plan_id
+        }).eq('user_id', user_id).execute()
+    except Exception as e:
+        return jsonify({"error": f"Database processing failed: {str(e)}"}), 500
+
+    plan = INSURANCE_PLANS[plan_id]
+    return jsonify({
+        "message": f"Cover set to {plan['name']}."
+                   + (f" Rs{plan['premium']:,}/month will be deducted from next month."
+                      if plan['premium'] else " No premium."),
+        "plan": {"id": plan_id, **plan}
     })
 
 

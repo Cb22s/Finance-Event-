@@ -288,7 +288,17 @@
             </div>
 
             <div style="margin-bottom:0.9rem;">
-                <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.4rem;">Start from a preset:</div>
+                <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.4rem;">
+                    <strong>Real-world news</strong> — pick an actual historical event. Fills the form with what really happened.
+                </div>
+                <select id="newsPicker" class="input-glass" style="width:100%;">
+                    <option value="">— choose a real event —</option>
+                </select>
+                <div id="newsDetail" style="font-size:0.78rem; color:var(--text-muted); margin-top:0.5rem;"></div>
+            </div>
+
+            <div style="margin-bottom:0.9rem;">
+                <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.4rem;">Or start from a generic preset:</div>
                 <div id="marketPresets" style="display:flex; flex-wrap:wrap; gap:0.4rem;"></div>
             </div>
 

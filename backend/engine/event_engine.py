@@ -70,7 +70,10 @@ def generate_events_for_player(player: dict, month: int, admin_events: list = No
                     "impact_target": ev.get('impact_target', 'cash'),
                     "value": float(ev.get('value', 0)),
                     "severity": "admin",
-                    "category": "admin",
+                    # Category now flows from the authored row so insurance can
+                    # tell a medical emergency from a rent hike. Falls back to
+                    # 'general' (uninsurable) when unspecified.
+                    "category": ev.get('category', 'general'),
                 })
         return manual
 
