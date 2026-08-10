@@ -41,9 +41,9 @@
             margin-bottom: 0.5rem;
             font-size: 0.85rem;
         }
-        .lb-row { display: grid; grid-template-columns: 32px 1fr auto; gap: 0.75rem; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.9rem; }
+        .lb-row { display: grid; grid-template-columns: 32px 1fr auto; gap: 0.75rem; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid rgba(59,130,246,0.08); font-size: 0.9rem; }
         .event-results-box {
-            background: rgba(0,0,0,0.3);
+            background: rgba(148,186,233,0.25);
             border: 1px solid var(--border-glass);
             border-radius: var(--radius-md);
             padding: 1rem;
@@ -111,6 +111,15 @@
         <!-- Next Month Results -->
         <div class="event-results-box" id="eventResults"></div>
 
+        <!-- ══ ADMIN TABS ══ -->
+        <div class="tab-bar" id="adminTabBar">
+            <button class="tab-btn active" data-tab="control">🎮 Control</button>
+            <button class="tab-btn" data-tab="market">📰 Market &amp; News</button>
+            <button class="tab-btn" data-tab="events">⚡ Events</button>
+            <button class="tab-btn" data-tab="players">👥 Players</button>
+        </div>
+
+        <div class="tab-panel" id="tab-events">
         <div class="two-col">
             <!-- LEFT: Event Manager + Choice Creator -->
             <div>
@@ -251,6 +260,9 @@
             </div>
         </div>
 
+        </div><!-- /tab-events -->
+
+        <div class="tab-panel active" id="tab-control">
         <!-- Game Controls -->
         <div class="glass-card" style="margin-top:1.25rem;">
             <div class="section-header">
@@ -273,10 +285,17 @@
                     <input type="checkbox" id="toggleMarriageRound" style="width:18px; height:18px; cursor:pointer;">
                     <span><strong>Open marriage round</strong> &mdash; players in Month 6 can choose to marry or stay single.</span>
                 </label>
+                <label style="display:flex; align-items:center; gap:0.75rem; cursor:pointer;">
+                    <input type="checkbox" id="toggleNegotiation" style="width:18px; height:18px; cursor:pointer;">
+                    <span><strong>Spouse conversations</strong> &mdash; married players negotiate a household proposal each month. Turn OFF to instantly disable (ADR-014 rollback).</span>
+                </label>
                 <div id="settingsHint" style="font-size:0.78rem; color:var(--text-muted);">Loading current settings&hellip;</div>
             </div>
         </div>
 
+        </div><!-- /tab-control -->
+
+        <div class="tab-panel" id="tab-market">
         <!-- Market Scenario Editor -->
         <div class="glass-card" style="margin-top:1.25rem;">
             <div class="section-header">
@@ -332,6 +351,9 @@
             </div>
         </div>
 
+        </div><!-- /tab-market -->
+
+        <div class="tab-panel" id="tab-players">
         <!-- Create Player -->
         <div class="glass-card" style="margin-top:1.25rem;">
             <div class="section-header">
@@ -394,6 +416,8 @@
             </div>
         </div>
     </div>
+
+        </div><!-- /tab-players -->
 
     <!-- Toast container -->
     <div class="toast-container" id="toastContainer"></div>

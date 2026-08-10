@@ -235,6 +235,9 @@ async function loadDashboard() {
         renderLoans(data.loan_info);
         renderActionBanner(data.allocation, p);
         renderInsurance(data.insurance);
+        updateTabBadges(data.allocation);
+        if (window.renderNegotiation) renderNegotiation(data.negotiation);
+        if (window.mascotUpdate) mascotUpdate(data);
 
         // ── Courtship & Marriage UI Render ──
         const courtshipSec = document.getElementById('courtshipSection');
@@ -268,7 +271,7 @@ async function loadDashboard() {
                                     ${opt.description}
                                 </p>
                                 
-                                <div style="font-size:0.8rem; border-top:1px solid rgba(255,255,255,0.05); padding-top:0.6rem; margin-bottom:0.75rem; display:flex; flex-direction:column; gap:0.4rem;">
+                                <div style="font-size:0.8rem; border-top:1px solid rgba(59,130,246,0.10); padding-top:0.6rem; margin-bottom:0.75rem; display:flex; flex-direction:column; gap:0.4rem;">
                                     <div style="display:flex; justify-content:space-between;">
                                         <span style="color:var(--text-muted);">Spouse Income:</span>
                                         <span id="income-${opt.id}" style="font-weight:600; color:var(--text-secondary);">${isIncomeRevealed ? _formatRevealedTrait(opt.id, 'income') : '?'}</span>
@@ -313,33 +316,9 @@ async function loadDashboard() {
         }
 
         // ── Optional Choices ──
-        const optsCon = document.getElementById('optionalChoicesContainer');
-        if (optsCon && data.choices) {
-            if (data.choices.length === 0) {
-                optsCon.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No opportunities this month.</p>';
-            } else {
-                const riskColor = { low: 'var(--accent-emerald)', medium: 'var(--accent-amber)', high: 'var(--accent-rose)' };
-                const riskEmoji = { low: '🟢', medium: '🟡', high: '🔴' };
-                optsCon.innerHTML = data.choices.map(c => {
-                    const rc = riskColor[c.risk_type] || 'var(--accent-amber)';
-                    return `
-                    <div class="choice-card" style="border-left: 3px solid ${rc};">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                            <span style="font-weight: 600; font-size: 0.9rem;">${c.name}</span>
-                            <span style="font-size: 0.75rem; color: ${rc}; font-weight: 600;">${c.cost > 0 ? 'Cost: ' + formatINR(c.cost) : 'Free'}</span>
-                        </div>
-                        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;">
-                            ${riskEmoji[c.risk_type] || ''} ${c.risk_type} risk • ${c.probability}% chance → <strong style="color:${rc};">${formatINR(c.reward_value)}</strong> ${c.reward_type}
-                        </p>
-                        <button class="btn-ghost" style="width: 100%; font-size: 0.8rem; padding: 0.4rem; border-color: ${rc}; color: ${rc};"
-                                onclick="buyOptionalChoice(${c.id})">
-                            <i class="fa-solid fa-dice"></i> Take Chance
-                        </button>
-                    </div>`;
-                }).join('');
-            }
-        }
-
+        // Opportunities (optional_choices) were REMOVED from the player view on
+        // 2026-07-24 at the organizer's request. Backend routes and DB rows remain
+        // dormant; re-enabling is a UI change only.
         // ── Event Logs ──
         const logContainer = document.getElementById('eventLogContainer');
         if (data.event_logs && data.event_logs.length > 0) {
@@ -354,7 +333,7 @@ async function loadDashboard() {
                     return `<div class="event-log-item ${cls}">${entry}</div>`;
                 }).join('');
                 return monthLabel + items;
-            }).join('<hr style="border-color: rgba(255,255,255,0.05); margin: 1rem 0;">');
+            }).join('<hr style="border-color: rgba(59,130,246,0.10); margin: 1rem 0;">');
         }
 
         // ── Trust Scores from Supabase ──
@@ -458,29 +437,8 @@ window.handleRelative = async function(relative_type, action) {
 };
 
 // ── Buy Optional Choice → POST /buy-choice ──
-window.buyOptionalChoice = async function(id) {
-    if (!confirm('Take this chance? Cost will be deducted immediately.')) return;
+// buyOptionalChoice removed with the opportunities panel (2026-07-24).
 
-    try {
-        const h = await getAuthHeaders();
-        const res = await fetch(`${API_BASE_URL}/buy-choice`, {
-            method: 'POST',
-            headers: h,
-            body: JSON.stringify({ choice_id: id })
-        });
-        const data = await res.json();
-        if (res.ok) {
-            showToast(data.message, data.success ? 'success' : 'info');
-            // A win pays off — celebrate. A loss — nothing, the sting is enough.
-            if (window.fx && data.success) fx.confetti(60);
-        } else {
-            showToast(data.error, 'error');
-        }
-        await loadDashboard();
-    } catch (err) {
-        showToast('Action failed', 'error');
-    }
-};
 
 // ── Reveal Trait → POST /courtship/reveal ──
 window.revealTrait = async function(archetype_id, trait_key) {
@@ -627,6 +585,7 @@ function renderActionBanner(alloc, player) {
         document.getElementById('actionBannerText').innerText =
             `You have ${formatINR(alloc.available_cash)} sitting idle. Decide where it goes before ending Month ${player.month}.`;
         document.getElementById('actionBannerBtn').onclick = () => {
+            switchTab('invest');
             document.getElementById('allocSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
         };
     } else {
@@ -874,4 +833,39 @@ async function setInsurance(plan) {
     } catch (e) {
         showToast('Failed to connect to server', 'error');
     }
+}
+
+
+// ============================================================================
+// TABS — Home | Invest | Loans & Cover | History
+// ============================================================================
+document.addEventListener('DOMContentLoaded', () => {
+    const bar = document.getElementById('tabBar');
+    if (!bar) return;
+    bar.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            bar.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(pn => pn.classList.remove('active'));
+            btn.classList.add('active');
+            const panel = document.getElementById('tab-' + btn.dataset.tab);
+            if (panel) panel.classList.add('active');
+        });
+    });
+});
+
+// Show a pulsing dot on the Invest tab while allocation is pending, so the
+// required action is findable without scrolling or guessing.
+function updateTabBadges(alloc) {
+    const investBtn = document.querySelector('.tab-btn[data-tab="invest"]');
+    if (!investBtn) return;
+    const needed = alloc && alloc.required && !alloc.done;
+    investBtn.innerHTML = needed ? '📈 Invest <span style="color:var(--accent-amber);">●</span>' : '📈 Invest';
+    if (needed) investBtn.classList.add('pulse-action');
+    else investBtn.classList.remove('pulse-action');
+}
+
+// Jump helper used by the action banner.
+function switchTab(name) {
+    const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+    if (btn) btn.click();
 }

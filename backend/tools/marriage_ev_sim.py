@@ -15,24 +15,16 @@ from models.constants import (
     MONTHLY_INCOME, LIFESTYLE_COSTS, TOTAL_MONTHS,
     STOCK_BASE_GROWTH, GOLD_BASE_GROWTH, EMERGENCY_FUND_GROWTH,
     INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH,
+    MARRIAGE_MONTH, WEDDING_COST, SPOUSE_BASE_EXPENSE,
+    ARCHETYPES as _GAME_ARCHETYPES,
 )
 
-MARRIAGE_MONTH = 6          # admin opens the marriage round here (mid-game)
-WEDDING_COST   = 88000      # one-off cost of marrying (makes SINGLE viable)
-SPOUSE_BASE_EXPENSE = 9000  # every spouse adds household cost per month
-
-# ── ARCHETYPE STAT BLOCKS (declarative data, ADR-006 style) ──
-# income      : spouse monthly income
-# expense_mod : monthly change to household expenses (+ = costs more)
-# stocks/gold/ef/loan : one-off contribution at marriage
-ARCHETYPES = {
-    # Each archetype mixes market-exposed and market-independent value so none
-    # is a one-way bet on whether the admin authors a bull or flat market.
-    "The Saver":    {"income": 10000, "expense_mod": -9000, "stocks":     0, "gold":  8000, "ef": 22000, "loan":     0},
-    "The Earner":   {"income": 36000, "expense_mod": 12000, "stocks":     0, "gold":     0, "ef":     0, "loan":     0},
-    "The Investor": {"income":  9000, "expense_mod": -1000, "stocks": 44000, "gold": 20000, "ef": 24000, "loan":     0},
-    "The Anchor":   {"income": 14000, "expense_mod": -2000, "stocks":  8000, "gold":     0, "ef": 45000, "loan":     0},
-}
+# All marriage numbers are now IMPORTED from models/constants.py above.
+# They used to be duplicated here, which is precisely how the simulator came to
+# certify a set of values the game no longer used (the V2 rebalance changed the
+# economy; this file kept validating the old stat blocks). One source of truth.
+ARCHETYPES = {a["name"]: {k: a[k] for k in ("income", "expense_mod", "stocks", "gold", "ef", "loan")}
+              for a in _GAME_ARCHETYPES.values()}
 
 # ── REPRESENTATIVE PLAYER STRATEGIES (how they deploy surplus each month) ──
 # fractions of monthly surplus directed to stocks / gold / emergency fund / cash

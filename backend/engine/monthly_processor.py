@@ -8,7 +8,8 @@ from models.constants import (
     MONTHLY_INCOME, LIFESTYLE_COSTS, BIKE_EMI,
     LOAN_INTEREST_RATE, AUTO_LOAN_INTEREST_RATE, LOAN_TERM_MONTHS,
     INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH,
-    ARCHETYPES, SPOUSE_BASE_EXPENSE, INSURANCE_PLANS, INSURABLE_CATEGORIES
+    ARCHETYPES, SPOUSE_BASE_EXPENSE, INSURANCE_PLANS, INSURABLE_CATEGORIES,
+    SATISFACTION_START, satisfaction_expense_drift
 )
 
 
@@ -128,7 +129,24 @@ def process_month_for_player(player: dict, month: int,
         if arc:
             spouse_expense = SPOUSE_BASE_EXPENSE + arc['expense_mod']
 
-    total_expense = adjusted_expense + spouse_expense
+    # ── ADR-014: relationship + permanent household modifiers ──
+    # satisfaction drift is bounded to +/-Rs3,000; the modifier is whatever the
+    # player has permanently negotiated (e.g. the Saver's budget restructure).
+    satisfaction = float(player.get('spouse_satisfaction', SATISFACTION_START) or SATISFACTION_START)
+    relationship_drift = 0.0
+    if spouse_arch_id and spouse_arch_id != 'single':
+        relationship_drift = satisfaction_expense_drift(satisfaction)
+        if abs(relationship_drift) >= 1:
+            mood = "tense" if relationship_drift > 0 else "settled"
+            event_log.append(
+                f"💞 Household is {mood} (satisfaction {satisfaction:.0f}/100): "
+                f"{relationship_drift:+,.0f} to monthly costs"
+            )
+    permanent_mod = float(player.get('household_expense_modifier', 0) or 0)
+    if abs(permanent_mod) >= 1:
+        event_log.append(f"📉 Negotiated household savings: {permanent_mod:+,.0f}/month")
+
+    total_expense = adjusted_expense + spouse_expense + relationship_drift + permanent_mod
     cash -= total_expense
     
     exp_desc = f"₹{adjusted_expense:,.0f}"
@@ -354,6 +372,8 @@ def process_month_for_player(player: dict, month: int,
         "discipline_score": discipline_avg,
         "financial_health_score": score_result['score'],
         "spouse_archetype": spouse_arch_id,
+        "spouse_satisfaction": int(satisfaction),
+        "household_expense_modifier": round(permanent_mod, 2),
         "insurance_plan": plan_id,
         "status": "active"
     }

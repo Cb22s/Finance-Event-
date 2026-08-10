@@ -336,7 +336,7 @@ function renderPlayersTable(players) {
         const email = (p.users && p.users.email) || '';
         const safeName = name.replace(/'/g, '');
         return `
-        <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+        <tr style="border-bottom:1px solid rgba(59,130,246,0.10);">
             <td style="padding:0.5rem; min-width:150px;">
                 <div style="font-weight:600; font-size:0.85rem;">${name}</div>
                 <div style="color:var(--text-muted); font-size:0.72rem;">${email}</div>
@@ -527,6 +527,8 @@ document.addEventListener('DOMContentLoaded', () => {
             evEl.checked = !!g.auto_events;
             mkEl.checked = !!g.auto_market;
             mrEl.checked = !!g.marriage_round_active;
+            const ngEl = document.getElementById('toggleNegotiation');
+            if (ngEl) ngEl.checked = !!g.negotiation_enabled;
             renderHint();
         } catch (e) { /* ignore */ }
     }
@@ -545,6 +547,8 @@ document.addEventListener('DOMContentLoaded', () => {
     evEl.addEventListener('change', () => save('auto_events', evEl.checked));
     mkEl.addEventListener('change', () => save('auto_market', mkEl.checked));
     mrEl.addEventListener('change', () => save('marriage_round_active', mrEl.checked));
+    const ngEl = document.getElementById('toggleNegotiation');
+    if (ngEl) ngEl.addEventListener('change', () => save('negotiation_enabled', ngEl.checked));
     loadSettings();
 });
 
@@ -599,7 +603,7 @@ async function loadMarket() {
             const del = m.source === 'admin'
                 ? `<button class="btn-ghost" style="font-size:0.65rem; padding:0.1rem 0.4rem;" onclick="delMarket(${m.month})">clear</button>`
                 : '';
-            return `<div style="display:flex; gap:0.6rem; align-items:center; padding:0.25rem 0; border-bottom:1px solid rgba(255,255,255,0.04);">
+            return `<div style="display:flex; gap:0.6rem; align-items:center; padding:0.25rem 0; border-bottom:1px solid rgba(59,130,246,0.08);">
                 <span style="width:34px; color:var(--text-muted);">M${m.month}</span>
                 <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.name}</span>
                 <span style="width:58px; text-align:right; color:${col(m.stock_pct)};">${fmt(m.stock_pct)}</span>
@@ -697,7 +701,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const col = v => v >= 0 ? 'var(--accent-emerald)' : 'var(--accent-rose)';
         const fmt = v => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
         detail.innerHTML =
-            `<div style="padding:0.6rem 0.75rem; border-radius:8px; background:rgba(255,255,255,0.03);">
+            `<div style="padding:0.6rem 0.75rem; border-radius:8px; background:rgba(59,130,246,0.07);">
                 <div style="margin-bottom:0.35rem;">
                     Stocks <strong style="color:${col(ev.stock_pct)}">${fmt(ev.stock_pct)}</strong> ·
                     Gold <strong style="color:${col(ev.gold_pct)}">${fmt(ev.gold_pct)}</strong>
@@ -705,5 +709,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div style="margin-bottom:0.35rem;"><em>${ev.real_note}</em></div>
                 <div style="color:var(--accent-primary);">Lesson: ${ev.lesson}</div>
             </div>`;
+    });
+});
+
+
+// ── ADMIN TABS ──
+document.addEventListener('DOMContentLoaded', () => {
+    const bar = document.getElementById('adminTabBar');
+    if (!bar) return;
+    bar.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            bar.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(pn => pn.classList.remove('active'));
+            btn.classList.add('active');
+            const panel = document.getElementById('tab-' + btn.dataset.tab);
+            if (panel) panel.classList.add('active');
+        });
     });
 });

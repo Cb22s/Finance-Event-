@@ -141,54 +141,69 @@ DISCIPLINE_EF_RESCUE = 40         # Emergency fund had to cover a cash deficit
 DISCIPLINE_AUTO_LOAN = 0          # Cash crisis forced an auto-loan
 
 # ──── MARRIAGE & COURTSHIP PARAMETERS (ADR-002) ────
+# RETUNED 2026-07-24. The V2 rebalance cut the player's monthly surplus from
+# ~Rs60,000 to ~Rs12,000 but these stat blocks were left at their old values, so
+# a spouse earning Rs10-36k/mo went from a marginal boost to a 1.8-2.25x
+# multiplier on everything the player did. marriage_ev_sim.py failed its own
+# fairness gates: marrying beat staying single by +10.2% (tolerance +/-4%),
+# making the marriage round a no-brainer rather than a decision.
+#
+# Values below were SOLVED by tools/marriage_tuner.py, not guessed. They pass
+# all three gates in both market regimes:
+#   spread 4.0%/5.5% (<=8) | single-gap +1.7%/+1.6% (+/-4) | dominance 0.4%/0.6% (<=2)
+#
+# The design intent survives: The Investor ranks ABOVE "stay single" when the
+# market grows and BELOW it when the market is flat, so the spouse choice is a
+# genuine read on the economy the admin authors, not a coin flip.
 MARRIAGE_MONTH = 6
-WEDDING_COST = 88000
+# Your personal share of the wedding AFTER family contributions and cash gifts —
+# not the total cost of the event. Priced so it is a real dent (about 2 months of
+# surplus) without being the liquidity landmine Rs88,000 had become.
+WEDDING_COST = 25000
 SPOUSE_BASE_EXPENSE = 9000
 
 ARCHETYPES = {
     "saver": {
         "name": "The Saver",
-        "income": 10000,
-        "expense_mod": -9000,
+        "income": 5000,
+        "expense_mod": -2500,
         "stocks": 0,
-        "gold": 8000,
-        "ef": 22000,
+        "gold": 12000,
+        "ef": 23000,
         "loan": 0,
-        "description": "Strong expense discipline, small emergency buffer. Low income; limited upside."
+        "description": "Runs the household lean and brings gold and savings. Low income, but she cuts your monthly costs and hands you a cushion."
     },
     "earner": {
         "name": "The Earner",
-        "income": 36000,
-        "expense_mod": 12000,
+        "income": 16000,
+        "expense_mod": 3500,
         "stocks": 0,
         "gold": 0,
-        "ef": 0,
+        "ef": 5000,
         "loan": 0,
-        "description": "High second income, but higher lifestyle expense and event exposure."
+        "description": "The strongest second income by far, but a bigger lifestyle to match. Steady cash every month, almost nothing up front."
     },
     "investor": {
         "name": "The Investor",
-        "income": 9000,
-        "expense_mod": -1000,
-        "stocks": 44000,
-        "gold": 20000,
-        "ef": 24000,
+        "income": 4000,
+        "expense_mod": -500,
+        "stocks": 35000,
+        "gold": 16000,
+        "ef": 4000,
         "loan": 0,
-        "description": "Brings an existing portfolio of stocks, gold, and cash. Volatile but high potential."
+        "description": "Brings a built portfolio rather than a salary. Worth the most if the market rises, the least if it stalls — a bet on the economy."
     },
     "anchor": {
         "name": "The Anchor",
-        "income": 14000,
-        "expense_mod": -2000,
-        "stocks": 8000,
+        "income": 7000,
+        "expense_mod": -500,
+        "stocks": 5000,
         "gold": 0,
-        "ef": 45000,
+        "ef": 35000,
         "loan": 0,
-        "description": "Stable income and a well-funded emergency fund. Predictable and solid."
+        "description": "A large emergency fund and dependable income. Boring on paper; the reason you survive a bad month."
     }
 }
-
-
 
 # ──── MARKET SCENARIO REGIMES (2026-07-21) ────
 # Stocks and gold are no longer drawn independently. Each month resolves to ONE
@@ -304,3 +319,64 @@ INSURANCE_PLANS = {
 # Which event categories insurance pays out against. Market losses are NOT
 # insurable — a player cannot buy protection from their own portfolio choices.
 INSURABLE_CATEGORIES = {"emergency", "medical"}
+
+
+# ──── SPOUSE NEGOTIATION (ADR-014, 2026-07-24) ────
+# She raises one proposal per month; the player negotiates in natural language.
+# EVERY rupee here is decided by services/negotiation_service.py. The AI layer
+# only extracts intent and voices her replies (ADR-003).
+
+NEGOTIATION_MAX_ROUNDS = 3
+# Round 1 is NEVER an auto-accept, however generous the offer. Persuasion is not
+# a single click — this is the "don't allow immediately" requirement in code.
+NEGOTIATION_MIN_ROUND_TO_ACCEPT = 2
+
+SATISFACTION_START = 60
+SATISFACTION_MIN = 0
+SATISFACTION_MAX = 100
+
+# Satisfaction deltas by outcome.
+SATISFACTION_DELTA = {
+    "accepted_full": 6,      # took her ask without haggling
+    "accepted_counter": 2,   # met in the middle
+    "auto_resolved": -8,     # ran out of rounds; she went ahead anyway
+    "refused": -15,          # flat no
+    "delayed": -4,           # pushed it to a later month
+}
+
+# Bounded financial teeth. Deliberately small: the relationship colours the game,
+# it does not decide it. Symmetric around satisfaction 50.
+#   satisfaction 0   -> +Rs3,000/month (a tense household costs more)
+#   satisfaction 50  ->  Rs0
+#   satisfaction 100 -> -Rs3,000/month (a happy one runs cheaper)
+SATISFACTION_EXPENSE_SWING = 3000
+
+# Lowest share of her ask each wife will ever settle for, at maximum satisfaction.
+# Below this she will not go at any satisfaction level.
+NEGOTIATION_FLOOR_RATIO = {
+    "earner": 0.70,     # it is her lifestyle; she holds firm
+    "investor": 0.60,
+    "anchor": 0.55,
+    "saver": 0.50,      # frugal by nature; most willing to trim
+}
+
+# How much UNhappiness stiffens her. At satisfaction 100 the required offer is the
+# floor; at 0 it rises toward the full ask by this fraction of the gap.
+NEGOTIATION_HARDNESS = 0.8
+
+
+def negotiation_min_ratio(archetype_id: str, satisfaction: float) -> float:
+    """
+    Minimum share of her ask she will accept, given her archetype and how happy
+    she is. MONOTONIC: higher satisfaction never raises the required offer.
+    """
+    floor = NEGOTIATION_FLOOR_RATIO.get(archetype_id, 0.6)
+    sat = max(SATISFACTION_MIN, min(SATISFACTION_MAX, float(satisfaction)))
+    unhappiness = 1.0 - (sat / 100.0)
+    return floor + (1.0 - floor) * unhappiness * NEGOTIATION_HARDNESS
+
+
+def satisfaction_expense_drift(satisfaction: float) -> float:
+    """Monthly household expense adjustment from the relationship. Bounded."""
+    sat = max(SATISFACTION_MIN, min(SATISFACTION_MAX, float(satisfaction)))
+    return round((50.0 - sat) / 50.0 * SATISFACTION_EXPENSE_SWING, 2)

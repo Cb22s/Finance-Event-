@@ -16,8 +16,12 @@ from models.constants import (
     INITIAL_BUDGET, SELL_PENALTY_RATE, TRUST_HELP_AMOUNTS, TRUST_SCORE_GAIN,
     LIFESTYLE_COSTS, ARCHETYPES, WEDDING_COST, SPOUSE_BASE_EXPENSE, MARRIAGE_MONTH,
     MONTHLY_INCOME, LOAN_INTEREST_RATE, LOAN_TERM_OPTIONS, LOAN_MIN_AMOUNT,
-    MAX_TOTAL_DEBT_MULTIPLE, MAX_EMI_TO_INCOME, INSURANCE_PLANS
+    MAX_TOTAL_DEBT_MULTIPLE, MAX_EMI_TO_INCOME, INSURANCE_PLANS,
+    NEGOTIATION_MAX_ROUNDS, SATISFACTION_START
 )
+from services import negotiation_service as negsvc
+from services import ai_service
+from models.negotiation_intents import IntentError, validate
 from engine.monthly_processor import _amortized_emi
 from engine.scoring import calculate_financial_health_score
 from engine.market_engine import calculate_risk_score, resolve_market_scenario
@@ -257,8 +261,31 @@ def get_dashboard():
         "insurance": {
             "current": player.get('insurance_plan') or 'none',
             "plans": [{"id": k, **v} for k, v in INSURANCE_PLANS.items()]
-        }
+        },
+        "negotiation": _dashboard_negotiation(user_id, player, game)
     })
+
+
+def _dashboard_negotiation(user_id, player, game):
+    """Negotiation state for the dashboard. Never raises — it is one panel."""
+    try:
+        ctx, err = _negotiation_context(user_id, player, game)
+        if err:
+            return {"active": False, "note": err}
+        return {
+            "active": True,
+            "proposal": ctx['proposal'],
+            "round": ctx['round'],
+            "max_rounds": NEGOTIATION_MAX_ROUNDS,
+            "satisfaction": ctx['satisfaction'],
+            "history": [
+                {"round": r.get('round'), "raw_text": r.get('raw_text'),
+                 "intent": r.get('intent'), "outcome": r.get('outcome')}
+                for r in ctx['history'] if r.get('confirmed')
+            ],
+        }
+    except Exception:
+        return {"active": False, "note": "unavailable"}
 
 
 # ──────────────────────────────────────────────
@@ -560,6 +587,191 @@ def loan_quote():
         "emi": round(emi, 2),
         "total_repayment": round(total, 2),
         "total_interest": round(total - amount, 2)
+    })
+
+
+# ──────────────────────────────────────────────
+# SPOUSE NEGOTIATION (ADR-014)
+#
+# TWO-STEP by design. /negotiate only INTERPRETS — it moves no money and writes
+# no state beyond the audit row. The player must then confirm the interpretation
+# via /negotiate/commit before the rules engine runs. That confirmation gate is
+# an ADR-003 constraint: we never spend someone's money on an inference they
+# have not seen and agreed to.
+# ──────────────────────────────────────────────
+def _negotiation_context(user_id, player, game):
+    """Shared state for both negotiation endpoints."""
+    arch = player.get('spouse_archetype')
+    if not arch or arch == 'single':
+        return None, "You are not married."
+    if not (game or {}).get('negotiation_enabled'):
+        return None, "The organizer has not opened conversations yet."
+
+    month = int(player['month'])
+
+    try:
+        catalogue = supabase.table('spouse_proposals').select('*').execute().data or []
+    except Exception:
+        catalogue = []
+
+    proposal = negsvc.generate_proposal(user_id, month, arch, catalogue)
+    if not proposal:
+        return None, "She has nothing to raise this month."
+
+    try:
+        rows = (supabase.table('player_negotiations')
+                .select('*').eq('user_id', user_id).eq('month', month)
+                .order('round').execute().data or [])
+    except Exception:
+        rows = []
+
+    if any(r.get('outcome') in ('accepted_full', 'accepted_counter', 'refused',
+                                'delayed', 'auto_resolved') for r in rows):
+        return None, "This month's conversation is already settled."
+
+    committed = [r for r in rows if r.get('confirmed')]
+    return {
+        "archetype": arch, "month": month, "proposal": proposal,
+        "round": len(committed) + 1, "history": rows,
+        "satisfaction": float(player.get('spouse_satisfaction', SATISFACTION_START) or SATISFACTION_START),
+    }, None
+
+
+@player_bp.route('/negotiate', methods=['POST'])
+def negotiate_interpret():
+    """STEP 1 — interpret only. No money moves here."""
+    user_id = get_user_id(request)
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    player = get_player(user_id)
+    if not player:
+        return jsonify({"error": "No player state found."}), 404
+
+    ctx, err = _negotiation_context(user_id, player, get_game_state())
+    if err:
+        return jsonify({"error": err}), 400
+
+    text = (request.json or {}).get('message', '')
+    try:
+        extracted = ai_service.extract_intent(text, ctx['proposal'])
+    except IntentError as e:
+        # Rejected, never guessed. Hand it back for rephrasing.
+        return jsonify({"error": str(e), "needs_rephrase": True}), 400
+
+    try:
+        supabase.table('player_negotiations').insert({
+            "user_id": user_id, "month": ctx['month'], "round": ctx['round'],
+            "raw_text": text, "intent": extracted['intent'],
+            "params": extracted['params'], "confirmed": False,
+            "outcome": "pending", "ai_source": extracted['ai_source'],
+        }).execute()
+    except Exception as e:
+        print(f"DEBUG: negotiation audit insert failed: {e}")
+
+    return jsonify({
+        "intent": extracted['intent'],
+        "params": extracted['params'],
+        "ai_source": extracted['ai_source'],
+        "confirmation": _confirmation_text(extracted, ctx['proposal']),
+        "round": ctx['round'],
+        "max_rounds": NEGOTIATION_MAX_ROUNDS,
+    })
+
+
+def _confirmation_text(extracted, proposal):
+    i, p = extracted['intent'], extracted['params']
+    if i == 'COUNTER_OFFER':
+        return f"Offer her Rs{p['amount']:,} towards {proposal['title']}?"
+    if i == 'ACCEPT_PROPOSAL':
+        return f"Agree to the full Rs{proposal['ask']:,}?"
+    if i == 'REQUEST_DELAY':
+        return f"Ask her to postpone this by {p['months']} month(s)?"
+    if i == 'PROPOSE_ALTERNATIVE':
+        return f"Suggest '{p['alternative_id'].replace('_', ' ')}' instead?"
+    if i == 'ASK_QUESTION':
+        return f"Ask her about '{p['topic']}'? (costs nothing)"
+    if i == 'REFUSE':
+        return "Refuse outright? She will not take it well."
+    return "Proceed?"
+
+
+@player_bp.route('/negotiate/commit', methods=['POST'])
+def negotiate_commit():
+    """STEP 2 — the player confirmed. NOW the rules engine decides."""
+    user_id = get_user_id(request)
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    player = get_player(user_id)
+    if not player:
+        return jsonify({"error": "No player state found."}), 404
+
+    ctx, err = _negotiation_context(user_id, player, get_game_state())
+    if err:
+        return jsonify({"error": err}), 400
+
+    body = request.json or {}
+    try:
+        params = validate(body.get('intent'), body.get('params') or {})
+    except IntentError as e:
+        return jsonify({"error": str(e)}), 400
+    intent = body['intent']
+
+    # ── DETERMINISTIC. No network. This is the only thing that decides money. ──
+    result = negsvc.evaluate(
+        intent=intent, params=params, proposal=ctx['proposal'],
+        round_no=ctx['round'], satisfaction=ctx['satisfaction'],
+        player_cash=float(player.get('cash', 0)),
+    )
+
+    new_sat = negsvc.clamp_satisfaction(ctx['satisfaction'] + result['satisfaction_delta'])
+    updates = {"spouse_satisfaction": new_sat}
+
+    if result['resolved']:
+        for field, delta in (result['effects'] or {}).items():
+            updates[field] = round(float(player.get(field, 0) or 0) + delta, 2)
+
+    try:
+        supabase.table('player_state').update(updates).eq('user_id', user_id).execute()
+        supabase.table('player_negotiations').insert({
+            "user_id": user_id, "month": ctx['month'], "round": ctx['round'],
+            "raw_text": body.get('message'), "intent": intent, "params": params,
+            "confirmed": True,
+            "rule_input": {"ask": ctx['proposal']['ask'], "round": ctx['round'],
+                           "satisfaction": ctx['satisfaction'],
+                           "required_minimum": result['required_minimum']},
+            "rule_output": {"outcome": result['outcome'],
+                            "agreed_amount": result['agreed_amount'],
+                            "effects": result['effects']},
+            "outcome": result['outcome'], "ai_source": "rules",
+        }).execute()
+    except Exception as e:
+        print(f"DEBUG: negotiation commit failed: {e}")
+        return jsonify({"error": f"Database processing failed: {str(e)}"}), 500
+
+    try:
+        dialogue = (supabase.table('spouse_dialogue').select('*')
+                    .eq('archetype_id', ctx['archetype']).execute().data or [])
+    except Exception:
+        dialogue = []
+
+    spouse_name = ARCHETYPES.get(ctx['archetype'], {}).get('name', 'Your spouse')
+    voice = ai_service.narrate(result['outcome'], result['reason'], ctx['proposal'],
+                               spouse_name, new_sat, dialogue)
+
+    return jsonify({
+        "outcome": result['outcome'],
+        "resolved": result['resolved'],
+        "agreed_amount": result['agreed_amount'],
+        "reason": result['reason'],
+        "spouse_line": voice['line'],
+        "ai_source": voice['ai_source'],
+        "satisfaction": new_sat,
+        "satisfaction_delta": result['satisfaction_delta'],
+        "round": ctx['round'],
+        "max_rounds": NEGOTIATION_MAX_ROUNDS,
+        "effects": result['effects'],
     })
 
 

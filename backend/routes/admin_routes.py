@@ -46,12 +46,29 @@ def start_game():
         supabase.table('player_month_log').delete().neq('user_id', dummy).execute()
         supabase.table('player_month_actions').delete().neq('user_id', dummy).execute()
         supabase.table('player_spouse_reveals').delete().neq('user_id', dummy).execute()
+        # ADR-014: negotiations are PLAYER data and must not survive a restart,
+        # or the engine reads last game's rounds as already-settled for month N.
+        supabase.table('player_negotiations').delete().neq('user_id', dummy).execute()
 
-        # Wipe events and choices
-        supabase.table('events').delete().neq('id', 0).execute()
-        supabase.table('optional_choices').delete().neq('id', 0).execute()
+        # ────────────────────────────────────────────────────────────────
+        # AUTHORED CONTENT IS **NOT** WIPED.
+        #
+        # This previously ran:
+        #     DELETE FROM events; DELETE FROM optional_choices;
+        # which destroyed the entire 12-month content pack every time an admin
+        # pressed "Start Game" — including on event day, seconds before play,
+        # leaving every student with salary-minus-expenses and no narrative.
+        # Discovered during the 2026-07-24 pre-deploy audit after it silently
+        # deleted a verified 11-event pack.
+        #
+        # Player data above = wiped. Authored content (events, optional_choices,
+        # market_scenarios, spouse_proposals, spouse_dialogue) = preserved.
+        # Use the admin Events tab to remove content deliberately.
+        # ────────────────────────────────────────────────────────────────
 
-        return jsonify({"message": "Game restarted. All data wiped!"})
+        return jsonify({
+            "message": "Game restarted. Player data wiped; authored content kept."
+        })
     except Exception as e:
         return jsonify({"error": f"Failed to start game: {e}"}), 500
 
@@ -616,6 +633,58 @@ def preview_market():
     return jsonify({"auto_market": auto_market, "path": out})
 
 
+@admin_bp.route('/admin/proposals', methods=['GET'])
+@admin_required
+def list_proposals():
+    """Authored spouse proposals + the built-in defaults they override."""
+    try:
+        rows = supabase.table('spouse_proposals').select('*').order('id').execute().data or []
+    except Exception as e:
+        return jsonify({"error": f"spouse_proposals table missing? {e}"}), 500
+    from services.negotiation_service import DEFAULT_PROPOSALS
+    return jsonify({"proposals": rows,
+                    "defaults": [{"archetype_id": k, **v} for k, v in DEFAULT_PROPOSALS.items()]})
+
+
+@admin_bp.route('/admin/proposals', methods=['POST'])
+@admin_required
+def add_proposal():
+    d = request.json or {}
+    required = ("archetype_id", "kind", "title", "description", "amount_min", "amount_max")
+    missing = [f for f in required if not d.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing: {missing}"}), 400
+    if d['kind'] not in ("lifestyle", "investment", "saving", "protection"):
+        return jsonify({"error": "kind must be lifestyle, investment, saving or protection."}), 400
+    try:
+        lo, hi = float(d['amount_min']), float(d['amount_max'])
+    except (TypeError, ValueError):
+        return jsonify({"error": "amount_min/amount_max must be numbers."}), 400
+    if lo > hi:
+        return jsonify({"error": "amount_min cannot exceed amount_max."}), 400
+
+    row = {"archetype_id": d['archetype_id'], "month": d.get('month') or None,
+           "kind": d['kind'], "title": d['title'], "description": d['description'],
+           "amount_min": lo, "amount_max": hi,
+           "floor_ratio": float(d.get('floor_ratio') or 0.6),
+           "ev_note": d.get('ev_note', '')}
+    try:
+        supabase.table('spouse_proposals').insert(row).execute()
+    except Exception as e:
+        return jsonify({"error": f"Save failed: {e}"}), 500
+    return jsonify({"message": "Proposal added.", "proposal": row})
+
+
+@admin_bp.route('/admin/proposals/<int:pid>', methods=['DELETE'])
+@admin_required
+def del_proposal(pid):
+    try:
+        supabase.table('spouse_proposals').delete().eq('id', pid).execute()
+    except Exception as e:
+        return jsonify({"error": f"Delete failed: {e}"}), 500
+    return jsonify({"message": f"Proposal {pid} removed."})
+
+
 @admin_bp.route('/admin/settings', methods=['POST'])
 @admin_required
 def update_settings():
@@ -627,6 +696,11 @@ def update_settings():
         fields['auto_market'] = bool(data['auto_market'])
     if 'marriage_round_active' in data:
         fields['marriage_round_active'] = bool(data['marriage_round_active'])
+    if 'negotiation_enabled' in data:
+        # ADR-014 kill switch. Off = the marriage system behaves exactly as it
+        # did before negotiation existed. Flipping this off mid-event is the
+        # documented rollback path.
+        fields['negotiation_enabled'] = bool(data['negotiation_enabled'])
     if not fields:
         return jsonify({"error": "Nothing to update."}), 400
     supabase.table('game_control').update(fields).eq('id', 1).execute()

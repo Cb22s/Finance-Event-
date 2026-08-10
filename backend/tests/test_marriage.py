@@ -5,6 +5,7 @@ from models.constants import (
     ARCHETYPES, SPOUSE_BASE_EXPENSE, MONTHLY_INCOME, LIFESTYLE_COSTS
 )
 from engine.market_engine import calculate_inflation_adjustment
+from models.constants import SATISFACTION_START, satisfaction_expense_drift
 
 class TestMarriageSystem(unittest.TestCase):
     def test_net_worth_normalization_with_spouse_income(self):
@@ -48,7 +49,12 @@ class TestMarriageSystem(unittest.TestCase):
         expense = calculate_inflation_adjustment(LIFESTYLE_COSTS['city']['total'], 7)
         spouse_expense = SPOUSE_BASE_EXPENSE + ARCHETYPES['saver']['expense_mod']
         spouse_income = ARCHETYPES['saver']['income']
-        expected = round(10000 + MONTHLY_INCOME + spouse_income - expense - spouse_expense, 2)
+        # ADR-014 added a bounded relationship drift to household costs. Derived
+        # here rather than hardcoded so a future retune updates the expectation
+        # instead of silently failing this test.
+        drift = satisfaction_expense_drift(SATISFACTION_START)
+        expected = round(10000 + MONTHLY_INCOME + spouse_income
+                         - expense - spouse_expense - drift, 2)
         self.assertAlmostEqual(result["ending_cash"], expected, places=2)
         self.assertEqual(result["updated_state"]["spouse_archetype"], "saver")
 

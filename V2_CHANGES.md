@@ -204,3 +204,194 @@ Basic is the capital-efficient pick; comprehensive is for the risk-averse. A gen
 1. **`expense_increase` events are one-time, not recurring.** The engine subtracts the value once; it does not permanently raise monthly expenses. Descriptions were reworded to be honest, but if you want rent hikes to compound, that's a real engine feature to add.
 2. City vs outer lifestyle still a fake choice.
 3. Deploy to Render + Netlify — none of this is live for players until they rebuild.
+
+---
+
+# V5 Changes (2026-07-24) — claymorphism, tabs, mascot
+
+## Theme: claymorphism light (sky blue)
+Full flip of the design system to soft-clay 3D on a light sky palette — clay drop-shadows with inset highlights, sunken inputs, pill buttons that physically press. Done at the CSS-variable layer plus an appended clay component layer, so **no class names changed**. All inline dark-theme remnants (`rgba(255,255,255,x)`, `rgba(0,0,0,x)`) swept across every HTML/JS file. Applies to player pages AND admin. Reduced-motion respected.
+
+Side effect: the ugly white full-screen dropdown from your screenshot was the native `<select>` fighting the dark theme — on the light theme it now matches the page.
+
+## Tabs kill the long scroll
+- **Player:** Net worth + portfolio always visible on top; below, tabs **🏠 Home | 📈 Invest | 🛡️ Loans & Cover | 📜 History**. The Invest tab shows a pulsing amber dot while allocation is pending; the action banner jumps straight to it.
+- **Admin:** **🎮 Control | 📰 Market & News | ⚡ Events | 👥 Players**. No page reloads.
+
+## Opportunities removed from player view
+Hidden entirely, per your decision. The 11 seeded choices and backend routes remain dormant — re-enabling is a UI-only change. Note: the admin "Optional Choice Creator" still exists in the Events tab; it now authors content no player can see. Tell me if you want it hidden too.
+
+## Monty 🪙 — the guide mascot
+CSS-drawn coin character, bobbing and blinking in the corner, with a speech bubble. **State-driven, not random:** it reads the same payload the dashboard renders and speaks only when the situation changes — never on the 5-second poll. Priority order: negative net worth → unallocated cash (with the exact amount) → marriage round → market crash ("don't panic-sell — remember March 2020") → boom → heavy debt → no insurance → turn locked → idle flavour. Click Monty to replay the current tip.
+
+## Verification
+All JS syntax-checked, every page's div tree balanced, 32 backend tests still pass (no backend changes).
+
+## Still open
+1. `expense_increase` events remain one-time, not recurring.
+2. City vs outer lifestyle remains a fake choice.
+3. **Deploy to Netlify** — this is all local until you push and rebuild.
+
+---
+
+# V6 (2026-07-24) — real 3D anime guide
+
+## Why not procedural 3D
+A character built from three.js primitives (spheres, cylinders) looks like a mannequin, not anime. Every good 3D anime character on the web is an artist-made **VRM** model. So the code loads a real model rather than trying to draw one.
+
+## What was built — `frontend/js/mascot3d.js`
+three.js `0.180.0` + `@pixiv/three-vrm@3.5.5` (CDN paths and peer-dep range verified against the jsDelivr API, not assumed). Loads `frontend/assets/mira.vrm` and renders head-and-shoulders at 200×260.
+
+- **Idle life:** breathing on the chest bone, slow spine sway, subtle head roll — small amplitudes; large ones look like a seizure.
+- **Head-tracking:** she follows the mouse cursor via the VRM `lookAt` rig.
+- **Expressions cross-fade** (eased, ~6/sec) into the five game moods, mapped onto VRM standard expressions: happy→happy, excited→happy(1.0), alert→surprised, worried→sad, sleepy→relaxed.
+- **Irregular blinking** — fixed intervals read robotic.
+- **VRM 0.x and 1.0 both work** via `VRMUtils.rotateVRM0()`.
+
+## Fail-safe chain
+The guide can degrade but must never take the dashboard down on event day:
+
+1. VRM loads → 3D model, SVG hidden
+2. No file / CDN blocked / not a VRM / **no WebGL** → quiet console note, hand-drawn 2D character stays
+3. Any throw at all → caught, 2D stays
+
+`mascot.js` hands face control to `MiraCore.on3D()` only once the model is actually live. Console tags are `[Mira] …` for diagnosis.
+
+## What YOU must do
+Drop a `.vrm` at `frontend/assets/mira.vrm`. See `frontend/assets/README.md`.
+- **VRoid Studio** (free) — build your own in ~15 min, zero licence risk. Best for a college event.
+- **VRoid Hub** — thousands of free downloadable models; check the licence.
+- **Keep it under ~8 MB.** Export textures at 1024, not 2048. A 20 MB model on shared conference wifi takes 30+ seconds to appear.
+
+## Verification
+All JS parses, importmap correctly precedes the module script, every page's div tree balanced, 32 backend tests pass.
+
+---
+
+# V7 (2026-07-24) — marriage retuned (it was broken)
+
+## What the concept is
+At month 6 the admin opens the **marriage round**. Four candidate wives are shown face-down. You get **3 free dates** to reveal one trait each (income, expense impact, or assets); extra dates cost ₹5,000. Then you either **propose** or **stay single** — staying single is free and must remain competitive, or the round is fake.
+
+A wife changes the rest of your game: monthly income, monthly household expense, and a one-off dowry of assets at the wedding. You pay your share of the wedding out of cash.
+
+## The bug I introduced and did not catch
+The V2 rebalance cut the player's monthly surplus from ~₹60,000 to ~₹12,000. **The spouse stat blocks were never retuned.** A wife earning ₹10–36k/month went from a marginal boost to a **1.8×–2.25× multiplier** on the player's entire surplus.
+
+`marriage_ev_sim.py` — the tool written specifically to catch this — failed two of its own three gates:
+
+- **GATE 2:** marrying beat staying single by **+10.2%** (tolerance ±4%). Marriage was near-mandatory.
+- **GATE 1:** spread between options **11.1% / 11.8%** (tolerance ≤8%).
+
+Root cause of the miss: the simulator kept its **own duplicate copy** of the archetype numbers, so it happily certified values the game no longer used.
+
+## The fix — solved, not guessed
+`tools/marriage_tuner.py` searches income / expense / dowry / wedding-cost space and evaluates all three gates in both market regimes. It found a zero-violation configuration:
+
+| Wife | Income | Expense mod | Stocks | Gold | EF |
+|---|---:|---:|---:|---:|---:|
+| The Saver | 5,000 | −2,500 | 0 | 12,000 | 23,000 |
+| The Earner | 16,000 | +3,500 | 0 | 0 | 5,000 |
+| The Investor | 4,000 | −500 | 35,000 | 16,000 | 4,000 |
+| The Anchor | 7,000 | −500 | 5,000 | 0 | 35,000 |
+
+`WEDDING_COST` 88,000 → **25,000**, reframed as *your share after family contributions and cash gifts* — the old figure had become a 7.3-month liquidity landmine.
+
+**Result — all gates PASS in both regimes:** spread 4.0% / 5.5%, single-gap +1.7% / +1.6%, dominance 0.4% / 0.6%.
+
+The design intent survives and is sharper than before: **The Investor ranks above "stay single" when markets grow (+0.4%) and below it when they stall (−1.5%).** The wife you pick is a read on the economy the admin authors, not a coin flip.
+
+`marriage_ev_sim.py` now **imports from `constants.py`** instead of duplicating it. That drift cannot recur.
+
+## Month 6 is now the hardest month — confirm you want this
+Your own wedding (−25,000) lands in the same month as the authored **Family Wedding Contribution** (−22,000). Combined −47,000 against a ₹12,000 surplus:
+
+| Entering month 6 with | Outcome |
+|---|---|
+| No emergency fund | **Cash crisis** → penalty auto-loan |
+| Small EF (₹25,000) | **Cash crisis** → penalty auto-loan |
+| Healthy EF (₹60,000) | Survives, ₹31,973 EF left |
+
+I left this as-is because it teaches the real lesson — build liquidity *before* a major life event. Say the word if you want the family-wedding event moved or reduced.
+
+## Caveat
+The gates were evaluated **without** the content-pack events (the simulator couldn't reach Supabase from my sandbox). Events hit married and single players equally, so the relative comparison holds, but re-run `marriage_ev_sim.py` from your machine — it will pull the real events — before the event day.
+
+## Verification
+32 backend tests pass. Live `spouse_archetypes` table updated to match.
+
+---
+
+# V8 (2026-07-24) — ADR-014 spouse negotiation, fully built
+
+Ratified ADR is at `ADR-014_SPOUSE_NEGOTIATION.md`. Built rules-first, per the recommendation: the entire feature works offline; the LLM is additive.
+
+## The pipeline (ADR-003 honoured)
+```
+player types  →  /negotiate       →  extract intent (LLM or offline parser)
+                                  →  CONFIRMATION shown back to player
+              →  /negotiate/commit→  negotiation_service.evaluate()   ← DECIDES THE MONEY
+                                  →  audit row + state update
+                                  →  ai_service.narrate()             ← words only
+```
+`negotiation_service.py` contains **no network reference at all** — a test asserts this by source inspection. The AI cannot influence a rupee.
+
+## Your requirements, in code
+- **"combine income"** — already live: spouse income and expenses fold into the household each month.
+- **"wife arrange event and put in estimate"** — she raises one proposal per month with an amount, seeded per player+month so a refresh cannot reroll it.
+- **"it will depend on spouse"** — proposal *type* is archetype-driven, and three of the four are financially **sound**: Investor pushes equity, Saver pushes a permanent budget cut, Anchor pushes emergency reserves. Only the Earner's is pure consumption. "Always haggle her down" is a losing strategy.
+- **"player can try convince"** — free-text natural language, any phrasing.
+- **"once start convince don't allow immediately"** — `NEGOTIATION_MIN_ROUND_TO_ACCEPT = 2`. A round-1 counter is **never** accepted, even at 99% of the ask. Test `test_round_one_never_accepts_even_at_full_ask` locks this.
+- **"only allow the player satisfying his spouse"** — acceptance requires clearing `negotiation_min_ratio(archetype, satisfaction)`. A content wife compromises; an unhappy one holds out.
+
+## Fairness (ADR-000)
+Phrasing cannot change an outcome — `test_phrasing_cannot_change_outcome` proves "I can do 15,000" and "lets say Rs 15k" resolve identically. Ambiguous text is **rejected, never guessed**.
+
+## Satisfaction
+0–100, starts 60. Primary effect is conversational. Financial teeth bounded to **±₹3,000/month** and asserted by test across the full range. Does **not** enter the leaderboard score — a social stat should not dilute ADR-008.
+
+## New surface
+Backend: `models/negotiation_intents.py`, `services/negotiation_service.py`, `services/ai_service.py`, `POST /negotiate`, `POST /negotiate/commit`, admin proposal CRUD.
+Frontend: `js/negotiation.js` + chat panel with satisfaction meter and confirmation gate.
+DB: `spouse_satisfaction`, `household_expense_modifier`, `spouse_proposals`, `player_negotiations` (full audit), `spouse_dialogue`, `negotiation_enabled` flag. All applied live, all additive.
+
+## Rollback
+Admin → Control → **Spouse conversations** off. One toggle; marriage reverts to previous behaviour.
+
+## Verification
+**64 tests pass** (32 pre-existing + 32 new). End-to-end negotiation exercised. All page div trees balanced.
+
+## Outstanding
+1. **§8.1 unanswered — no LLM key.** `ANTHROPIC_API_KEY` on Render activates richer conversation; without it the offline parser and template bank run everything. Nothing is blocked.
+2. Still not pushed to GitHub.
+
+---
+
+# V9 (2026-07-24) — PRE-DEPLOY AUDIT
+
+## CRITICAL BUG FOUND AND FIXED — `/start-game` destroyed the content pack
+
+`POST /admin/start-game` ran `DELETE FROM events; DELETE FROM optional_choices;`.
+
+**Every press of "Start Game" wiped the entire authored 12-month content pack.** On event day the sequence would have been: press Start Game → all 11 problems deleted → 50 students play salary-minus-expenses with no narrative, no emergencies, and insurance protecting against nothing.
+
+This was not hypothetical: the audit found `events = 0 rows`, having verified 11 rows seeded earlier. The button had already eaten them.
+
+**Fix:** player data is still wiped on restart (and `player_negotiations` was *added* to the wipe — old rounds would otherwise read as already-settled in the new game). Authored content — `events`, `optional_choices`, `market_scenarios`, `spouse_proposals`, `spouse_dialogue` — is now preserved. Content is deleted deliberately from the admin Events tab, never as a side effect.
+
+Content pack re-seeded: **11 events restored.**
+
+## Second fix — RPC column landmine
+The month-roll RPC did not list `spouse_satisfaction` or `household_expense_modifier`. Harmless today (unlisted columns keep their values), but the moment anyone makes the engine change satisfaction during a roll, the write would vanish with no error. Both columns added with COALESCE — behaviour identical, hole closed.
+
+## Audit results
+
+| Check | Result |
+|---|---|
+| Backend tests | **64 pass** |
+| Routes register | 41, clean |
+| JS syntax (7 files) | all parse |
+| HTML div balance (7 pages) | all balanced |
+| Script references resolve | yes |
+| Engine-written columns exist in DB | yes |
+| Content pack | **restored, 11 events** |

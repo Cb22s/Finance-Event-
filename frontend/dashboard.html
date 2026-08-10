@@ -145,6 +145,16 @@
             </div>
         </div>
 
+
+        <!-- ══ TAB BAR — kills the single long scroll ══ -->
+        <div class="tab-bar" id="tabBar">
+            <button class="tab-btn active" data-tab="home">🏠 Home</button>
+            <button class="tab-btn" data-tab="invest">📈 Invest</button>
+            <button class="tab-btn" data-tab="protect">🛡️ Loans &amp; Cover</button>
+            <button class="tab-btn" data-tab="history">📜 History</button>
+        </div>
+
+        <div class="tab-panel active" id="tab-home">
         <!-- ══ ACTION REQUIRED BANNER ══
              The old dashboard gave no indication that the player owed a decision.
              Players sat on the page waiting for something to happen. -->
@@ -172,17 +182,45 @@
             </div>
             <p id="marketReason" style="font-size:0.9rem; color: var(--text-secondary); margin: 0 0 1rem 0; line-height:1.6;"></p>
             <div style="display:flex; gap:1rem; flex-wrap:wrap;">
-                <div style="flex:1; min-width:150px; padding:0.85rem 1rem; border-radius:12px; background: rgba(255,255,255,0.03);">
+                <div style="flex:1; min-width:150px; padding:0.85rem 1rem; border-radius:12px; background: rgba(59,130,246,0.07);">
                     <div style="font-size:0.7rem; letter-spacing:0.06em; text-transform:uppercase; color: var(--text-muted);">Stock Market</div>
                     <div id="marketStockPct" style="font-size:1.5rem; font-weight:700;">—</div>
                 </div>
-                <div style="flex:1; min-width:150px; padding:0.85rem 1rem; border-radius:12px; background: rgba(255,255,255,0.03);">
+                <div style="flex:1; min-width:150px; padding:0.85rem 1rem; border-radius:12px; background: rgba(59,130,246,0.07);">
                     <div style="font-size:0.7rem; letter-spacing:0.06em; text-transform:uppercase; color: var(--text-muted);">Gold Price</div>
                     <div id="marketGoldPct" style="font-size:1.5rem; font-weight:700;">—</div>
                 </div>
             </div>
         </div>
 
+        <!-- ── Courtship & Marriage (Month 6 Special Event) ── -->
+        <div id="courtshipSection" class="glass-card mb-section animate-fade-in-up" style="display: none;">
+            <div class="section-header">
+                <div class="section-icon icon-rose" style="background: rgba(244,63,94,0.1); color: var(--accent-rose);"><i class="fa-solid fa-heart"></i></div>
+                <div>
+                    <div class="section-title">Courtship &amp; Marriage Round</div>
+                    <div class="section-subtitle">You are in Month 6. Spend dates to reveal candidate traits, then propose or stay single.</div>
+                </div>
+            </div>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border-glass); flex-wrap: wrap; gap: 0.5rem;">
+                <span style="font-size: 0.85rem; color: var(--text-muted);">
+                    Dates Used: <strong id="datesUsedVal" style="color: var(--accent-rose);">0</strong> / 3 free. 
+                    <span id="extraDateNotice" style="display: none; color: var(--accent-warning);">Extra dates cost ₹5,000 cash.</span>
+                </span>
+                <button class="btn-ghost" id="staySingleBtn" style="border-color: rgba(59,130,246,0.25); color: var(--text-secondary); font-size: 0.8rem; padding: 0.4rem 1.25rem;">
+                    <i class="fa-solid fa-user-shield" style="margin-right: 0.4rem;"></i>Stay Single (Free)
+                </button>
+            </div>
+
+            <div id="candidatesGrid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem;">
+                <!-- Candidate cards will be dynamically rendered -->
+            </div>
+        </div>
+
+        </div><!-- /tab-home -->
+
+        <div class="tab-panel" id="tab-invest">
         <!-- ══ MONTHLY ALLOCATION ══ -->
         <div id="allocSection" class="glass-card mb-section animate-fade-in-up" style="display:none;">
             <div class="section-header">
@@ -223,20 +261,19 @@
             </div>
         </div>
 
-        <!-- ══ LOANS (secondary — collapsed by default) ══ -->
-        <details id="loanSection" class="glass-card mb-section" style="display:none; padding:1.25rem;">
-            <summary style="cursor:pointer; list-style:none;">
-                <div class="section-header" style="margin-bottom:0;">
-                    <div class="section-icon icon-danger" style="background: rgba(244,63,94,0.1); color: var(--accent-rose);"><i class="fa-solid fa-building-columns"></i></div>
-                    <div style="flex:1;">
-                        <div class="section-title">Loans</div>
-                        <div class="section-subtitle" id="loanSubtitle">Borrow to seize an opportunity — repay with interest every month.</div>
-                    </div>
-                    <i class="fa-solid fa-chevron-down" style="color: var(--text-muted);"></i>
-                </div>
-            </summary>
+        </div><!-- /tab-invest -->
 
-            <div style="margin-top:1.25rem;">
+        <div class="tab-panel" id="tab-protect">
+        <!-- ══ LOANS (secondary — collapsed by default) ══ -->
+        <div id="loanSection" class="glass-card mb-section" style="display:none;">
+            <div class="section-header">
+                <div class="section-icon icon-danger" style="background: rgba(244,63,94,0.1); color: var(--accent-rose);"><i class="fa-solid fa-building-columns"></i></div>
+                <div>
+                    <div class="section-title">Loans 🏦</div>
+                    <div class="section-subtitle" id="loanSubtitle">Borrow to seize an opportunity — repay with interest every month.</div>
+                </div>
+            </div>
+            <div>
 
             <div id="loanList" style="margin-bottom:1rem;"></div>
 
@@ -257,30 +294,60 @@
             </div>
             <div id="loanQuote" style="font-size:0.85rem; color: var(--text-muted); margin-top:0.85rem;"></div>
             </div>
-        </details>
+        </div>
 
-        <!-- ── Courtship & Marriage (Month 6 Special Event) ── -->
-        <div id="courtshipSection" class="glass-card mb-section animate-fade-in-up" style="display: none;">
+        <!-- ══ SPOUSE NEGOTIATION (ADR-014) ══ -->
+        <div id="negotiationSection" class="glass-card mb-section animate-fade-in-up" style="display:none;">
             <div class="section-header">
-                <div class="section-icon icon-rose" style="background: rgba(244,63,94,0.1); color: var(--accent-rose);"><i class="fa-solid fa-heart"></i></div>
-                <div>
-                    <div class="section-title">Courtship &amp; Marriage Round</div>
-                    <div class="section-subtitle">You are in Month 6. Spend dates to reveal candidate traits, then propose or stay single.</div>
+                <div class="section-icon icon-rose" style="background: rgba(244,63,94,0.1); color: var(--accent-rose);"><i class="fa-solid fa-comments"></i></div>
+                <div style="flex:1;">
+                    <div class="section-title">💬 A conversation at home</div>
+                    <div class="section-subtitle" id="negoSubtitle">She wants to talk about something.</div>
                 </div>
             </div>
-            
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border-glass); flex-wrap: wrap; gap: 0.5rem;">
-                <span style="font-size: 0.85rem; color: var(--text-muted);">
-                    Dates Used: <strong id="datesUsedVal" style="color: var(--accent-rose);">0</strong> / 3 free. 
-                    <span id="extraDateNotice" style="display: none; color: var(--accent-warning);">Extra dates cost ₹5,000 cash.</span>
-                </span>
-                <button class="btn-ghost" id="staySingleBtn" style="border-color: rgba(255,255,255,0.2); color: var(--text-secondary); font-size: 0.8rem; padding: 0.4rem 1.25rem;">
-                    <i class="fa-solid fa-user-shield" style="margin-right: 0.4rem;"></i>Stay Single (Free)
-                </button>
+
+            <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem;">
+                <div style="flex:1; min-width:180px;">
+                    <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted);">Her happiness</div>
+                    <div style="display:flex; align-items:center; gap:0.6rem; margin-top:0.3rem;">
+                        <div style="flex:1; height:10px; border-radius:999px; background:#dbeafe; box-shadow:var(--clay-pressed); overflow:hidden;">
+                            <div id="negoSatBar" style="height:100%; width:60%; border-radius:999px; background:var(--gradient-success); transition:width .5s;"></div>
+                        </div>
+                        <strong id="negoSatVal" style="font-size:0.9rem;">60</strong>
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted);">Round</div>
+                    <div id="negoRound" style="font-size:1.1rem; font-weight:700;">1 / 3</div>
+                </div>
             </div>
 
-            <div id="candidatesGrid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem;">
-                <!-- Candidate cards will be dynamically rendered -->
+            <div class="choice-card" style="margin-bottom:1rem;">
+                <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.3rem;" id="negoTitle">—</div>
+                <div style="font-size:0.85rem; color:var(--text-secondary); line-height:1.6;" id="negoDesc"></div>
+                <div style="margin-top:0.7rem; font-size:0.9rem;">
+                    She is asking for <strong id="negoAsk" style="color:var(--accent-rose);">₹0</strong>
+                </div>
+                <div id="negoEv" style="margin-top:0.5rem; font-size:0.78rem; color:var(--text-muted); font-style:italic;"></div>
+            </div>
+
+            <div id="negoChat" style="max-height:230px; overflow-y:auto; margin-bottom:0.9rem;"></div>
+
+            <div id="negoConfirm" style="display:none; padding:0.85rem 1rem; border-radius:var(--radius-md); background:rgba(245,158,11,0.12); margin-bottom:0.8rem;">
+                <div style="font-size:0.88rem; font-weight:600; margin-bottom:0.6rem;" id="negoConfirmText"></div>
+                <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
+                    <button class="btn-primary" id="negoConfirmYes" style="font-size:0.82rem; padding:0.45rem 1.3rem;">Yes, say that</button>
+                    <button class="btn-ghost" id="negoConfirmNo" style="font-size:0.82rem; padding:0.45rem 1.3rem;">Rewrite</button>
+                </div>
+            </div>
+
+            <div id="negoInputRow" style="display:flex; gap:0.6rem; flex-wrap:wrap;">
+                <input type="text" id="negoInput" class="input-glass" style="flex:1; min-width:220px;"
+                       placeholder="Talk to her — e.g. “I can manage ₹15,000 this month”">
+                <button class="btn-primary" id="negoSend" style="min-width:110px;">Say it</button>
+            </div>
+            <div id="negoHint" style="font-size:0.75rem; color:var(--text-muted); margin-top:0.5rem;">
+                Type naturally. Name a number, or say yes, no, or later.
             </div>
         </div>
 
@@ -289,40 +356,25 @@
              permanently expanded alongside the primary decision, which is what made
              the page feel complicated: four panels competing for attention with no
              indication of which one the player actually had to act on. -->
-        <details id="moreOptions" class="glass-card mb-section" style="padding:1.25rem;">
-            <summary style="cursor:pointer; list-style:none; display:flex; align-items:center; gap:0.75rem;">
-                <div class="section-icon icon-warning" style="flex-shrink:0;"><i class="fa-solid fa-ellipsis"></i></div>
-                <div style="flex:1;">
-                    <div class="section-title">More Options</div>
-                    <div class="section-subtitle">Insurance, loans, and opportunities — optional</div>
-                </div>
-                <i class="fa-solid fa-chevron-down" style="color: var(--text-muted);"></i>
-            </summary>
-
-            <div style="margin-top:1.25rem;">
-                <!-- Insurance (replaces Social Investment) -->
-                <div style="margin-bottom:1.5rem;">
-                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.3rem;">
-                        <i class="fa-solid fa-shield-heart" style="margin-right:0.4rem; color: var(--accent-emerald);"></i>Insurance Cover
-                    </div>
-                    <div style="font-size:0.8rem; color: var(--text-muted); margin-bottom:0.85rem;">
-                        A guaranteed small cost each month against an uncertain large one. Does not cover market losses.
-                    </div>
-                    <div id="insuranceOptions" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:0.7rem;"></div>
-                </div>
-
-                <!-- Optional Choices -->
-                <div id="optionalChoicesWrap">
-                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.85rem;">
-                        <i class="fa-solid fa-dice" style="margin-right:0.4rem; color: var(--accent-amber);"></i>Opportunities
-                    </div>
-                    <div id="optionalChoicesContainer">
-                        <p style="color: var(--text-muted); font-size: 0.9rem;">No opportunities this month.</p>
-                    </div>
+        <div id="moreOptions" class="glass-card mb-section">
+            <div class="section-header">
+                <div class="section-icon icon-success"><i class="fa-solid fa-shield-heart"></i></div>
+                <div>
+                    <div class="section-title">Insurance Cover 🛡️</div>
+                    <div class="section-subtitle">Protect yourself before the emergency, not after</div>
                 </div>
             </div>
-        </details>
+            <div>
+                <div style="font-size:0.8rem; color: var(--text-muted); margin-bottom:0.85rem;">
+                    A guaranteed small cost each month against an uncertain large one. Does not cover market losses.
+                </div>
+                <div id="insuranceOptions" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:0.7rem;"></div>
+            </div>
+        </div>
 
+        </div><!-- /tab-protect -->
+
+        <div class="tab-panel" id="tab-history">
         <!-- ── Event History ── -->
         <div class="glass-card mb-section animate-fade-in-up">
             <div class="section-header">
@@ -336,6 +388,7 @@
                 <p style="color: var(--text-muted); font-size: 0.9rem;">No events yet — complete months to see history.</p>
             </div>
         </div>
+        </div><!-- /tab-history -->
 
         <!-- ── Status Banner ── -->
         <div id="statusBanner" class="alert-glass alert-warning" style="display: none; justify-content: center; margin-bottom: 1rem;">
@@ -357,6 +410,19 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./js/config.js"></script>
     <script src="./js/effects.js"></script>
+    <script src="./js/mascot.js"></script>
+    <script src="./js/negotiation.js"></script>
     <script src="./js/dashboard.js"></script>
+
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+        "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.5.5/lib/three-vrm.module.min.js"
+      }
+    }
+    </script>
+    <script type="module" src="./js/mascot3d.js"></script>
 </body>
 </html>
