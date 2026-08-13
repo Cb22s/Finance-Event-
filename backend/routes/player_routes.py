@@ -10,10 +10,11 @@ from services.game_service import (
     get_optional_choices, get_trust_scores, get_all_event_logs,
     get_pending_sales, fair_roll, mark_action, get_active_loans,
     get_market_scenario_row, get_month_allocation, allocation_done, allocation_key,
-    action_done
+    action_done, apply_player_txn, PlayerTxnError, require_playable
 )
 from models.constants import (
     INITIAL_BUDGET, SELL_PENALTY_RATE, TRUST_HELP_AMOUNTS, TRUST_SCORE_GAIN,
+    VALID_RELATIVE_TYPES,
     LIFESTYLE_COSTS, ARCHETYPES, WEDDING_COST, SPOUSE_BASE_EXPENSE, MARRIAGE_MONTH,
     MONTHLY_INCOME, LOAN_INTEREST_RATE, LOAN_TERM_OPTIONS, LOAN_MIN_AMOUNT,
     MAX_TOTAL_DEBT_MULTIPLE, MAX_EMI_TO_INCOME, INSURANCE_PLANS,
@@ -24,7 +25,9 @@ from services import ai_service
 from models.negotiation_intents import IntentError, validate
 from engine.monthly_processor import _amortized_emi
 from engine.scoring import calculate_financial_health_score
-from engine.market_engine import calculate_risk_score, resolve_market_scenario
+from engine.market_engine import (
+    calculate_risk_score, resolve_market_scenario, calculate_inflation_adjustment
+)
 
 player_bp = Blueprint('player', __name__)
 
@@ -146,6 +149,13 @@ def allocate_month1():
         "financial_health_score": initial_score['score'],
         "status": "waiting"
     }
+
+    # D-10: atomically claim the month-1 allocation. The upsert makes player_state
+    # idempotent, but the month_log insert is not — two concurrent first-allocations
+    # would each pass the get_player() pre-check and write a duplicate month-1 log.
+    # The player_month_actions PK makes the second caller lose the claim cleanly.
+    if not mark_action(user_id, 1, allocation_key(1)):
+        return jsonify({"error": "You have already allocated for this game."}), 400
 
     try:
         supabase.table('player_state').upsert(new_state).execute()
@@ -301,13 +311,10 @@ def allocate_month():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    game = get_game_state()
-    if not game or game['game_status'] != 'active':
-        return jsonify({"error": "Game is not currently active."}), 400
-
-    player = get_player(user_id)
-    if not player:
-        return jsonify({"error": "No player state found. Complete Month 1 first."}), 404
+    # A-02: unified gate — active game + turn not locked/processing.
+    player, game, err = require_playable(user_id)
+    if err:
+        return jsonify({"error": err[0]}), err[1]
 
     month = int(player['month'])
     if month < 2:
@@ -362,12 +369,8 @@ def allocate_month():
             "error": f"Prepayment ₹{to_prepay:,.0f} exceeds outstanding debt of ₹{outstanding:,.0f}."
         }), 400
 
-    # ── Claim the month atomically BEFORE mutating balances. If two requests race,
-    #    the loser gets a unique-violation and no money is moved twice. ──
-    if not mark_action(user_id, month, allocation_key(month)):
-        return jsonify({"error": f"You have already allocated for Month {month}."}), 400
-
-    # Apply prepayment oldest-loan-first
+    # Prepayment distribution (oldest-loan-first), computed from the snapshot and
+    # applied atomically below as loan_updates.
     loan_writes = []
     remaining_prepay = to_prepay
     for loan in sorted(active_loans, key=lambda l: l['id']):
@@ -383,27 +386,38 @@ def allocate_month():
             "status": 'paid' if new_bal <= 0.01 else 'active'
         })
 
-    new_cash = keep_cash
-    new_stocks = float(player.get('stocks', 0)) + to_stocks
-    new_gold = float(player.get('gold', 0)) + to_gold
-    new_ef = float(player.get('emergency_fund', 0)) + to_ef
-    new_outstanding = round(outstanding - to_prepay, 2)
-
+    # A-01: one atomic, row-locked transaction. Balances move as ADDITIVE deltas
+    # (cash out, assets in, loans down) so a concurrent loan/relative/etc. composes
+    # correctly instead of racing. The alloc:{month} claim is inside the same txn.
+    # require_cash carries the ±1 rupee tolerance the old max(0, available-invested)
+    # allowed for float/display rounding.
     try:
-        for lw in loan_writes:
-            supabase.table('player_loans').update({
-                "current_amount": lw['current_amount'],
-                "status": lw['status']
-            }).eq('id', lw['id']).execute()
+        apply_player_txn(
+            user_id, month, action_key=allocation_key(month),
+            require_cash=max(0.0, round(invested, 2) - 1.0),
+            deltas={
+                "cash": -round(invested, 2),
+                "stocks": round(to_stocks, 2),
+                "gold": round(to_gold, 2),
+                "emergency_fund": round(to_ef, 2),
+                "loans": -round(to_prepay, 2),
+            },
+            loan_updates=loan_writes,
+        )
+    except PlayerTxnError as e:
+        if e.kind == 'DUPLICATE_ACTION':
+            return jsonify({"error": f"You have already allocated for Month {month}."}), 400
+        if e.kind == 'INSUFFICIENT_CASH':
+            return jsonify({"error": "Your available cash changed — refresh and try again."}), 409
+        if e.kind == 'PLAYER_NOT_FOUND':
+            return jsonify({"error": "No player state found."}), 404
+        return jsonify({"error": "Allocation could not be processed. No money moved."}), 400
+    except Exception as e:
+        print(f"DEBUG: Monthly allocation DB error: {e}")
+        return jsonify({"error": f"Database processing failed: {str(e)}"}), 500
 
-        supabase.table('player_state').update({
-            "cash": round(new_cash, 2),
-            "stocks": round(new_stocks, 2),
-            "gold": round(new_gold, 2),
-            "emergency_fund": round(new_ef, 2),
-            "loans": max(0, new_outstanding)
-        }).eq('user_id', user_id).execute()
-
+    # Best-effort allocation record (audit/dashboard display; not a balance).
+    try:
         supabase.table('player_month_allocations').insert({
             "user_id": user_id,
             "month": month,
@@ -415,8 +429,7 @@ def allocate_month():
             "kept_as_cash": round(keep_cash, 2)
         }).execute()
     except Exception as e:
-        print(f"DEBUG: Monthly allocation DB error: {e}")
-        return jsonify({"error": f"Database processing failed: {str(e)}"}), 500
+        print(f"DEBUG: allocation record insert failed: {e}")
 
     return jsonify({
         "message": f"Month {month} allocation confirmed.",
@@ -439,13 +452,10 @@ def set_insurance():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    game = get_game_state()
-    if not game or game['game_status'] != 'active':
-        return jsonify({"error": "Game is not currently active."}), 400
-
-    player = get_player(user_id)
-    if not player:
-        return jsonify({"error": "No player state found."}), 404
+    # A-02: unified gate — active game + turn not locked/processing.
+    player, game, err = require_playable(user_id)
+    if err:
+        return jsonify({"error": err[0]}), err[1]
 
     plan_id = (request.json or {}).get('plan', 'none')
     if plan_id not in INSURANCE_PLANS:
@@ -479,13 +489,10 @@ def take_loan():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    game = get_game_state()
-    if not game or game['game_status'] != 'active':
-        return jsonify({"error": "Game is not currently active."}), 400
-
-    player = get_player(user_id)
-    if not player:
-        return jsonify({"error": "No player state found."}), 404
+    # A-02: unified gate — active game + turn not locked/processing.
+    player, game, err = require_playable(user_id)
+    if err:
+        return jsonify({"error": err[0]}), err[1]
 
     month = int(player['month'])
     data = request.json or {}
@@ -523,27 +530,26 @@ def take_loan():
                      f"({int(MAX_EMI_TO_INCOME*100)}% of income). Borrow less or pick a longer term."
         }), 400
 
-    # Atomic claim — one voluntary loan per month, and no double-credit on retry.
-    if not mark_action(user_id, month, f"loan:{month}"):
-        return jsonify({"error": "You have already taken a loan this month."}), 400
-
+    # A-01: atomic apply. loan:{month} idempotency (one voluntary loan/month) is now
+    # claimed inside the row-locked transaction, and cash/loans move as ADDITIVE deltas
+    # so a concurrent allocate/relative/etc. cannot lose or duplicate the credit.
     try:
-        supabase.table('player_loans').insert({
-            "user_id": user_id,
-            "principal": round(amount, 2),
-            "current_amount": round(amount, 2),
-            "interest_rate": LOAN_INTEREST_RATE,
-            "month_taken": month,
-            "term_months": term,
-            "loan_type": "player",
-            "emi": round(new_emi, 2),
-            "status": "active"
-        }).execute()
-
-        supabase.table('player_state').update({
-            "cash": round(float(player.get('cash', 0)) + amount, 2),
-            "loans": round(outstanding + amount, 2)
-        }).eq('user_id', user_id).execute()
+        apply_player_txn(
+            user_id, month, action_key=f"loan:{month}",
+            deltas={"cash": round(amount, 2), "loans": round(amount, 2)},
+            loan_inserts=[{
+                "principal": round(amount, 2), "current_amount": round(amount, 2),
+                "interest_rate": LOAN_INTEREST_RATE, "month_taken": month,
+                "term_months": term, "loan_type": "player",
+                "emi": round(new_emi, 2), "status": "active",
+            }],
+        )
+    except PlayerTxnError as e:
+        if e.kind == 'DUPLICATE_ACTION':
+            return jsonify({"error": "You have already taken a loan this month."}), 400
+        if e.kind == 'PLAYER_NOT_FOUND':
+            return jsonify({"error": "No player state found."}), 404
+        return jsonify({"error": "Loan could not be processed. No money moved."}), 400
     except Exception as e:
         print(f"DEBUG: Loan DB error: {e}")
         return jsonify({"error": f"Database processing failed: {str(e)}"}), 500
@@ -644,11 +650,12 @@ def negotiate_interpret():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    player = get_player(user_id)
-    if not player:
-        return jsonify({"error": "No player state found."}), 404
+    # A-02: unified gate — active game + turn not locked/processing.
+    player, game, gerr = require_playable(user_id)
+    if gerr:
+        return jsonify({"error": gerr[0]}), gerr[1]
 
-    ctx, err = _negotiation_context(user_id, player, get_game_state())
+    ctx, err = _negotiation_context(user_id, player, game)
     if err:
         return jsonify({"error": err}), 400
 
@@ -703,11 +710,12 @@ def negotiate_commit():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    player = get_player(user_id)
-    if not player:
-        return jsonify({"error": "No player state found."}), 404
+    # A-02: unified gate — active game + turn not locked/processing.
+    player, game, gerr = require_playable(user_id)
+    if gerr:
+        return jsonify({"error": gerr[0]}), gerr[1]
 
-    ctx, err = _negotiation_context(user_id, player, get_game_state())
+    ctx, err = _negotiation_context(user_id, player, game)
     if err:
         return jsonify({"error": err}), 400
 
@@ -718,6 +726,29 @@ def negotiate_commit():
         return jsonify({"error": str(e)}), 400
     intent = body['intent']
 
+    # ── D-05: enforce the confirmation gate. commit may only execute an intent
+    # that /negotiate first interpreted and showed the player. We require a
+    # matching pending (unconfirmed) interpretation row for this exact
+    # (month, round, intent); without it we refuse — money never moves on an
+    # inference the player never saw (ADR-003), and the audit chain
+    # (interpretation → confirmation → commit) stays complete. If the earlier
+    # interpretation write was lost, the player simply re-sends via chat, which
+    # re-creates the pending row: self-healing, never a money hole.
+    try:
+        pending = (supabase.table('player_negotiations')
+                   .select('id')
+                   .eq('user_id', user_id).eq('month', ctx['month'])
+                   .eq('round', ctx['round']).eq('intent', intent)
+                   .eq('confirmed', False).eq('outcome', 'pending')
+                   .limit(1).execute().data or [])
+    except Exception:
+        pending = []
+    if not pending:
+        return jsonify({
+            "error": "Send your message to her first, then confirm what she understood.",
+            "needs_rephrase": True,
+        }), 400
+
     # ── DETERMINISTIC. No network. This is the only thing that decides money. ──
     result = negsvc.evaluate(
         intent=intent, params=params, proposal=ctx['proposal'],
@@ -726,14 +757,40 @@ def negotiate_commit():
     )
 
     new_sat = negsvc.clamp_satisfaction(ctx['satisfaction'] + result['satisfaction_delta'])
-    updates = {"spouse_satisfaction": new_sat}
 
+    # ── A-01 + D-04: apply satisfaction + any financial effects atomically under
+    # the row lock, as ADDITIVE deltas, with the per-(month,round) claim inside the
+    # same transaction. A double-click / two tabs / replay collide on the claim and
+    # only one turn applies; a concurrent allocate/loan cannot lose the cash effect.
+    deltas = {"spouse_satisfaction": result['satisfaction_delta']}
+    require_cash = None
     if result['resolved']:
         for field, delta in (result['effects'] or {}).items():
-            updates[field] = round(float(player.get(field, 0) or 0) + delta, 2)
+            deltas[field] = deltas.get(field, 0) + delta
+        cash_out = -float((result['effects'] or {}).get('cash', 0) or 0)
+        if cash_out > 0:
+            require_cash = cash_out
 
     try:
-        supabase.table('player_state').update(updates).eq('user_id', user_id).execute()
+        apply_player_txn(
+            user_id, ctx['month'],
+            action_key=f"negotiate:{ctx['month']}:{ctx['round']}",
+            require_cash=require_cash, deltas=deltas, clamp_satisfaction=True,
+        )
+    except PlayerTxnError as e:
+        if e.kind == 'DUPLICATE_ACTION':
+            return jsonify({"error": "This negotiation turn has already been submitted."}), 409
+        if e.kind == 'INSUFFICIENT_CASH':
+            return jsonify({"error": "You do not have the cash to honour that. Counter lower."}), 400
+        if e.kind == 'PLAYER_NOT_FOUND':
+            return jsonify({"error": "No player state found."}), 404
+        return jsonify({"error": "Negotiation could not be processed. No money moved."}), 400
+    except Exception as e:
+        print(f"DEBUG: negotiation commit failed: {e}")
+        return jsonify({"error": f"Database processing failed: {str(e)}"}), 500
+
+    # Best-effort audit row (money already moved atomically above).
+    try:
         supabase.table('player_negotiations').insert({
             "user_id": user_id, "month": ctx['month'], "round": ctx['round'],
             "raw_text": body.get('message'), "intent": intent, "params": params,
@@ -747,8 +804,7 @@ def negotiate_commit():
             "outcome": result['outcome'], "ai_source": "rules",
         }).execute()
     except Exception as e:
-        print(f"DEBUG: negotiation commit failed: {e}")
-        return jsonify({"error": f"Database processing failed: {str(e)}"}), 500
+        print(f"DEBUG: negotiation audit insert failed: {e}")
 
     try:
         dialogue = (supabase.table('spouse_dialogue').select('*')
@@ -788,6 +844,11 @@ def lock_turn():
     if not player:
         return jsonify({"error": "Player state not found"}), 404
 
+    # A-02: never lock a turn mid-processing (the batch would overwrite it anyway).
+    game = get_game_state()
+    if game and game.get('game_status') == 'processing':
+        return jsonify({"error": "The month is being processed — try again in a moment."}), 409
+
     # Guard: from Month 2 onward the player must allocate their available cash
     # before the round can be locked. This is what makes the game a decision every
     # month instead of a single month-1 decision followed by 11 months of watching.
@@ -821,6 +882,11 @@ def sell_asset():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
+    # A-02: unified gate — active game + turn not locked/processing.
+    player, game, gerr = require_playable(user_id)
+    if gerr:
+        return jsonify({"error": gerr[0]}), gerr[1]
+
     data = request.json
     asset_type = data.get('asset')
     amount_to_sell = float(data.get('amount', 0))
@@ -830,13 +896,6 @@ def sell_asset():
 
     if amount_to_sell <= 0:
         return jsonify({"error": "Amount must be positive."}), 400
-
-    player = get_player(user_id)
-    if not player:
-        return jsonify({"error": "Player state not found"}), 404
-
-    if player.get('status') == 'waiting':
-        return jsonify({"error": "Your turn is locked. Wait for next month."}), 400
 
     current_val = float(player.get(asset_type, 0))
     if amount_to_sell > current_val:
@@ -884,15 +943,13 @@ def buy_choice():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    player = get_player(user_id)
-    if not player:
-        return jsonify({"error": "Player not found"}), 404
-
-    if player.get('status') == 'waiting':
-        return jsonify({"error": "Your turn is locked. Wait for next month."}), 400
+    # A-02: unified gate — active game + turn not locked/processing.
+    player, game, err = require_playable(user_id)
+    if err:
+        return jsonify({"error": err[0]}), err[1]
 
     from services.choice_service import execute_choice
-    result = execute_choice(player, request.json.get('choice_id'))
+    result = execute_choice(player, (request.json or {}).get('choice_id'))
 
     if "error" in result:
         return jsonify(result), 400
@@ -908,84 +965,79 @@ def handle_relative():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    data = request.json
-    relative_type = data.get('relative_type')
+    # A-02: unified gate — active game + turn not locked/processing.
+    player, game, err = require_playable(user_id)
+    if err:
+        return jsonify({"error": err[0]}), err[1]
+
+    data = request.json or {}
+    relative_type = str(data.get('relative_type', '')).strip().lower()
     action = data.get('action', 'none')
 
     if action not in ('none', 'medium', 'high'):
         return jsonify({"error": "Invalid action."}), 400
 
-    player = get_player(user_id)
-    if not player:
-        return jsonify({"error": "Player not found"}), 404
-
-    if player.get('status') == 'waiting':
-        return jsonify({"error": "Your turn is locked."}), 400
+    # C-01: relative_type must be a KNOWN relative. The backend is authoritative —
+    # without this, any invented string is a fresh idempotency key, so the
+    # "one help per relative per month" cap was bypassable and trust was farmable.
+    if relative_type not in VALID_RELATIVE_TYPES:
+        return jsonify({"error": f"Unknown relative. Choose one of {sorted(VALID_RELATIVE_TYPES)}."}), 400
 
     cost = TRUST_HELP_AMOUNTS.get(action, 0)
     trust_gain = TRUST_SCORE_GAIN.get(action, 0)
+    month = int(player['month'])
 
-    cash = float(player['cash'])
-    month = player['month']
-
-    # A committing action (spending on a relative) can be done ONCE per relative
-    # per month. Declining ('none') is free and doesn't consume the slot, so a
-    # player can still change their mind. Without this, trust was farmable by
-    # calling this endpoint repeatedly in the same month.
-    if action != 'none':
-        if cash < cost:
-            return jsonify({"error": f"Not enough cash. Need ₹{cost:,} but have ₹{cash:,.0f}"}), 400
-        # Atomic claim — PRIMARY KEY makes a duplicate insert fail.
-        if not mark_action(user_id, month, f"relative:{relative_type}"):
-            return jsonify({"error": "You already helped this relative this month."}), 400
-
-    # Apply cash cost + trust gain as a DELTA to the single source of truth
-    # (player_state.trust_score). Previously this endpoint OVERWROTE trust_score
-    # with the sum of relative rows, which wiped the trust the monthly event
-    # engine adds/removes. Both systems now add deltas to the same field.
-    if action != 'none':
-        cash -= cost
-        current_trust = float(player.get('trust_score', 0) or 0)
-        supabase.table('player_state').update({
-            'cash': cash,
-            'trust_score': current_trust + trust_gain
-        }).eq('user_id', user_id).execute()
-
-    # Keep the per-relative rows for audit / total_spent (no longer used to
-    # reset player_state.trust_score).
-    existing = supabase.table('player_relative_score').select('*').eq('user_id', user_id).eq('relative_type', relative_type).execute()
-    if existing.data:
-        current_rel_trust = int(existing.data[0].get('trust_score', 0))
-        current_spent = float(existing.data[0].get('total_spent', 0))
-        supabase.table('player_relative_score').update({
-            'trust_score': current_rel_trust + trust_gain,
-            'total_spent': current_spent + cost
-        }).eq('user_id', user_id).eq('relative_type', relative_type).execute()
-    else:
-        supabase.table('player_relative_score').insert({
-            'user_id': user_id,
-            'relative_type': relative_type,
-            'trust_score': trust_gain,
-            'total_spent': cost
-        }).execute()
-
-    # Log the action
-    supabase.table('player_relative_actions').insert({
-        'user_id': user_id,
-        'month': month,
-        'relative_type': relative_type,
-        'action_taken': action,
-        'amount_spent': cost
-    }).execute()
-
+    # Declining is free and does NOT consume the per-relative slot.
     if action == 'none':
-        return jsonify({"message": f"You chose not to help. No trust gained.", "trust_change": 0})
-    else:
-        return jsonify({
-            "message": f"Helped {relative_type} relative ({action}). Spent ₹{cost:,}. Trust +{trust_gain}.",
-            "trust_change": trust_gain,
-            "amount_spent": cost
-        })
+        return jsonify({"message": "You chose not to help. No trust gained.", "trust_change": 0})
+
+    # Friendly pre-check; the authoritative affordability check is under the lock.
+    if float(player.get('cash', 0)) < cost:
+        return jsonify({"error": f"Not enough cash. Need ₹{cost:,} but have ₹{float(player.get('cash', 0)):,.0f}"}), 400
+
+    # A-01: atomic apply. cash out + trust up as ADDITIVE deltas (so the monthly
+    # event engine's trust changes are never clobbered), with the once-per-relative
+    # claim (relative:{type}) inside the same row-locked transaction.
+    try:
+        apply_player_txn(
+            user_id, month, action_key=f"relative:{relative_type}",
+            require_cash=float(cost),
+            deltas={"cash": -float(cost), "trust_score": float(trust_gain)},
+        )
+    except PlayerTxnError as e:
+        if e.kind == 'DUPLICATE_ACTION':
+            return jsonify({"error": "You already helped this relative this month."}), 400
+        if e.kind == 'INSUFFICIENT_CASH':
+            return jsonify({"error": f"Not enough cash. Need ₹{cost:,}."}), 400
+        if e.kind == 'PLAYER_NOT_FOUND':
+            return jsonify({"error": "Player not found"}), 404
+        return jsonify({"error": "Could not process. No money moved."}), 400
+
+    # Best-effort per-relative audit rows (trust/spend history; not a balance).
+    try:
+        existing = supabase.table('player_relative_score').select('*').eq('user_id', user_id).eq('relative_type', relative_type).execute()
+        if existing.data:
+            supabase.table('player_relative_score').update({
+                'trust_score': int(existing.data[0].get('trust_score', 0)) + trust_gain,
+                'total_spent': float(existing.data[0].get('total_spent', 0)) + cost
+            }).eq('user_id', user_id).eq('relative_type', relative_type).execute()
+        else:
+            supabase.table('player_relative_score').insert({
+                'user_id': user_id, 'relative_type': relative_type,
+                'trust_score': trust_gain, 'total_spent': cost
+            }).execute()
+        supabase.table('player_relative_actions').insert({
+            'user_id': user_id, 'month': month, 'relative_type': relative_type,
+            'action_taken': action, 'amount_spent': cost
+        }).execute()
+    except Exception as e:
+        print(f"DEBUG: relative audit rows failed: {e}")
+
+    return jsonify({
+        "message": f"Helped {relative_type} relative ({action}). Spent ₹{cost:,}. Trust +{trust_gain}.",
+        "trust_change": trust_gain,
+        "amount_spent": cost
+    })
 
 
 # ──────────────────────────────
@@ -1021,14 +1073,11 @@ def courtship_reveal():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    player = get_player(user_id)
-    if not player:
-        return jsonify({"error": "Player state not found"}), 404
+    # A-02: unified gate — active game + turn not locked/processing.
+    player, game, gerr = require_playable(user_id)
+    if gerr:
+        return jsonify({"error": gerr[0]}), gerr[1]
 
-    if player.get('status') == 'waiting':
-        return jsonify({"error": "Your turn is locked. Wait for next month."}), 400
-
-    game = get_game_state()
     if player['month'] != 6 or not game.get('marriage_round_active'):
         return jsonify({"error": "Courtship is only available when the marriage round is active in Month 6."}), 400
 
@@ -1102,14 +1151,11 @@ def courtship_marry():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    player = get_player(user_id)
-    if not player:
-        return jsonify({"error": "Player state not found"}), 404
+    # A-02: unified gate — active game + turn not locked/processing.
+    player, game, gerr = require_playable(user_id)
+    if gerr:
+        return jsonify({"error": gerr[0]}), gerr[1]
 
-    if player.get('status') == 'waiting':
-        return jsonify({"error": "Your turn is locked. Wait for next month."}), 400
-
-    game = get_game_state()
     if player['month'] != 6 or not game.get('marriage_round_active'):
         return jsonify({"error": "Marriage round is only available when active in Month 6."}), 400
 
@@ -1129,101 +1175,123 @@ def courtship_marry():
     loans = float(player.get('loans', 0))
     discipline_avg = float(player.get('discipline_score', 100))
 
-    summary = ""
     if choice == 'single':
-        summary = "💍 You chose to stay single and focus on your individual goals."
-        supabase.table('player_state').update({
-            'spouse_archetype': 'single'
-        }).eq('user_id', user_id).execute()
-        
-        supabase.table('player_month_log').insert({
-            "user_id": user_id,
-            "month": 6,
-            "starting_cash": cash,
-            "ending_cash": cash,
-            "net_worth": player.get('net_worth', 0),
-            "summary": summary
-        }).execute()
-        
+        # A-01: the one-time 'marry' claim + the state set are one atomic txn.
+        try:
+            apply_player_txn(user_id, MARRIAGE_MONTH, action_key='marry',
+                             sets={"spouse_archetype": "single"})
+        except PlayerTxnError as e:
+            if e.kind == 'DUPLICATE_ACTION':
+                return jsonify({"error": "You have already made a marriage decision."}), 400
+            if e.kind == 'PLAYER_NOT_FOUND':
+                return jsonify({"error": "Player state not found"}), 404
+            return jsonify({"error": "Could not process. No changes made."}), 400
+        try:
+            supabase.table('player_month_log').insert({
+                "user_id": user_id, "month": 6,
+                "starting_cash": cash, "ending_cash": cash,
+                "net_worth": player.get('net_worth', 0),
+                "summary": "💍 You chose to stay single and focus on your individual goals."
+            }).execute()
+        except Exception as e:
+            print(f"DEBUG: single month_log insert failed: {e}")
         return jsonify({"message": "You chose to stay single.", "spouse_archetype": "single"})
 
-    # Wedding cost deduction
+    # Friendly pre-check; the authoritative wedding-cost check is under the lock.
     if cash < WEDDING_COST:
         return jsonify({"error": f"Insufficient cash for wedding. Need ₹{WEDDING_COST:,} but have ₹{cash:,.0f}."}), 400
 
+    # ── Formulas (UNCHANGED) computed in Python; the RPC only applies them atomically ──
     arc = ARCHETYPES[choice]
-    cash -= WEDDING_COST
-    stocks += arc['stocks']
-    gold += arc['gold']
-    ef += arc['ef']
-    
-    # Handle spouse loan if any
-    if arc['loan'] > 0:
-        supabase.table('player_loans').insert({
-            'user_id': user_id,
-            'principal': arc['loan'],
-            'current_amount': arc['loan'],
-            'interest_rate': 0.12,
-            'month_taken': 6,
-            'status': 'active'
-        }).execute()
-        # Fetch updated total loans
-        loans = get_total_loans(user_id)
-
-    # Immediately apply Month 6 spouse income/expense
     spouse_income = arc['income']
     spouse_expense = SPOUSE_BASE_EXPENSE + arc['expense_mod']
     net_spouse_flow = spouse_income - spouse_expense
-    cash += net_spouse_flow
 
-    # Recalculate net worth
-    net_worth = cash + stocks + gold + ef - loans
+    proj_cash = cash - WEDDING_COST + net_spouse_flow
+    proj_stocks = stocks + arc['stocks']
+    proj_gold = gold + arc['gold']
+    proj_ef = ef + arc['ef']
+    proj_loans = loans + arc['loan']
+    net_worth = proj_cash + proj_stocks + proj_gold + proj_ef - proj_loans
 
-    # Recalculate risk level
-    temp_state = {
-        'cash': cash, 'stocks': stocks, 'gold': gold,
-        'emergency_fund': ef, 'loans': loans
-    }
-    risk_level = calculate_risk_score(temp_state)
+    risk_level = calculate_risk_score({
+        'cash': proj_cash, 'stocks': proj_stocks, 'gold': proj_gold,
+        'emergency_fund': proj_ef, 'loans': proj_loans
+    })
 
-    # Recalculate score
+    # ── D-07: score against the real household living expense (inflation-adjusted
+    # lifestyle cost, with the bike discount), matching monthly_processor's basis. ──
+    lifestyle = player.get('lifestyle_type', 'city')
+    living = LIFESTYLE_COSTS.get(lifestyle, LIFESTYLE_COSTS['city'])
+    adjusted_living = calculate_inflation_adjustment(living['total'], MARRIAGE_MONTH)
+    if player.get('bike_status'):
+        adjusted_living -= living['transport'] * 0.5
+
+    # ── D-03: fold the spouse's one-time resource injection into scoring. ──
+    spouse_assets = arc['stocks'] + arc['gold'] + arc['ef'] - arc['loan']
+
     score_result = calculate_financial_health_score(
         net_worth=net_worth, month=6,
-        emergency_fund=ef, monthly_expense=spouse_expense,
-        loans=loans, total_assets=cash + stocks + gold + ef,
+        emergency_fund=proj_ef, monthly_expense=adjusted_living,
+        loans=proj_loans, total_assets=proj_cash + proj_stocks + proj_gold + proj_ef,
         risk_score=risk_level, discipline_avg=discipline_avg,
-        spouse_income=spouse_income
+        spouse_income=spouse_income,
+        spouse_assets=spouse_assets, wedding_cost=WEDDING_COST
     )
+
+    loan_inserts = []
+    if arc['loan'] > 0:
+        loan_inserts.append({
+            "principal": arc['loan'], "current_amount": arc['loan'],
+            "interest_rate": 0.12, "month_taken": 6, "status": "active",
+        })
+
+    # A-01: wedding cost, spouse asset/liability injection, month-6 spouse flow, the
+    # 'marry' claim and the spouse-loan insert all commit in ONE row-locked txn.
+    try:
+        apply_player_txn(
+            user_id, MARRIAGE_MONTH, action_key='marry', require_cash=float(WEDDING_COST),
+            deltas={
+                "cash": round(net_spouse_flow - WEDDING_COST, 2),
+                "stocks": round(arc['stocks'], 2),
+                "gold": round(arc['gold'], 2),
+                "emergency_fund": round(arc['ef'], 2),
+                "loans": round(arc['loan'], 2),
+            },
+            sets={"spouse_archetype": choice, "risk_level": risk_level,
+                  "financial_health_score": score_result['score']},
+            recompute_networth=True, loan_inserts=loan_inserts,
+        )
+    except PlayerTxnError as e:
+        if e.kind == 'DUPLICATE_ACTION':
+            return jsonify({"error": "You have already made a marriage decision."}), 400
+        if e.kind == 'INSUFFICIENT_CASH':
+            return jsonify({"error": f"Insufficient cash for wedding. Need ₹{WEDDING_COST:,}."}), 400
+        if e.kind == 'PLAYER_NOT_FOUND':
+            return jsonify({"error": "Player state not found"}), 404
+        return jsonify({"error": "Marriage could not be processed. No money moved."}), 400
 
     summary = (
         f"💍 Married {arc['name']}! Paid ₹{WEDDING_COST:,} wedding cost. "
         f"Spouse added assets (Stocks +₹{arc['stocks']:,}, Gold +₹{arc['gold']:,}, EF +₹{arc['ef']:,}). "
         f"Month 6 spouse flow net: {net_spouse_flow:+,}."
     )
+    try:
+        supabase.table('player_month_log').insert({
+            "user_id": user_id, "month": 6,
+            "starting_cash": player['cash'], "ending_cash": round(proj_cash, 2),
+            "net_worth": round(net_worth, 2), "summary": summary
+        }).execute()
+    except Exception as e:
+        print(f"DEBUG: marriage month_log insert failed: {e}")
 
     updates = {
         "spouse_archetype": choice,
-        "cash": round(cash, 2),
-        "stocks": round(stocks, 2),
-        "gold": round(gold, 2),
-        "emergency_fund": round(ef, 2),
-        "loans": round(loans, 2),
-        "net_worth": round(net_worth, 2),
-        "risk_level": risk_level,
-        "financial_health_score": score_result['score']
+        "cash": round(proj_cash, 2), "stocks": round(proj_stocks, 2),
+        "gold": round(proj_gold, 2), "emergency_fund": round(proj_ef, 2),
+        "loans": round(proj_loans, 2), "net_worth": round(net_worth, 2),
+        "risk_level": risk_level, "financial_health_score": score_result['score']
     }
-
-    supabase.table('player_state').update(updates).eq('user_id', user_id).execute()
-
-    supabase.table('player_month_log').insert({
-        "user_id": user_id,
-        "month": 6,
-        "starting_cash": player['cash'],
-        "ending_cash": round(cash, 2),
-        "net_worth": round(net_worth, 2),
-        "summary": summary
-    }).execute()
-
     return jsonify({
         "message": f"Successfully married {arc['name']}!",
         "spouse_archetype": choice,

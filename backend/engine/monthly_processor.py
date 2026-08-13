@@ -37,7 +37,9 @@ from engine.market_engine import (
     calculate_investment_growth, calculate_inflation_adjustment,
     calculate_net_worth, calculate_risk_score
 )
-from engine.scoring import calculate_financial_health_score, update_discipline_average
+from engine.scoring import (
+    calculate_financial_health_score, update_discipline_average, spouse_score_inputs
+)
 
 
 def process_month_for_player(player: dict, month: int,
@@ -331,18 +333,17 @@ def process_month_for_player(player: dict, month: int,
     discipline_avg = update_discipline_average(prev_discipline, month, month_discipline)
     total_assets = cash + stocks + gold + emergency_fund
     
-    spouse_income = 0
-    if spouse_arch_id and spouse_arch_id != 'single':
-        arc = ARCHETYPES.get(spouse_arch_id)
-        if arc:
-            spouse_income = arc['income']
+    # D-09: one shared contract for the spouse scoring inputs (income + injected
+    # assets + wedding cost); D-03 folds them into the net-worth normalization.
+    spouse_income, spouse_assets, wedding_cost = spouse_score_inputs(spouse_arch_id)
 
     score_result = calculate_financial_health_score(
         net_worth=net_worth, month=month,
         emergency_fund=emergency_fund, monthly_expense=adjusted_expense,
         loans=total_loan_outstanding, total_assets=total_assets,
         risk_score=risk_level, discipline_avg=discipline_avg,
-        spouse_income=spouse_income
+        spouse_income=spouse_income,
+        spouse_assets=spouse_assets, wedding_cost=wedding_cost
     )
     c = score_result['components']
     event_log.append(

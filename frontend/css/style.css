@@ -36,18 +36,18 @@
     --gradient-hero: linear-gradient(160deg, #e0f2fe 0%, #bfdbfe 45%, #dbeafe 100%);
 
     /* Clay shadows: soft drop + light top-left inset + dark bottom-right inset */
-    --shadow-sm: 6px 6px 12px rgba(148, 186, 233, 0.45), -4px -4px 10px rgba(255, 255, 255, 0.85);
-    --shadow-md: 10px 10px 22px rgba(148, 186, 233, 0.5), -6px -6px 16px rgba(255, 255, 255, 0.9);
-    --shadow-lg: 14px 14px 32px rgba(120, 165, 220, 0.5), -8px -8px 22px rgba(255, 255, 255, 0.95);
-    --shadow-glow: 0 0 24px rgba(59, 130, 246, 0.25);
-    --shadow-glow-cyan: 0 0 24px rgba(8, 145, 178, 0.2);
-    --clay-inset: inset 3px 3px 6px rgba(255, 255, 255, 0.9), inset -3px -3px 8px rgba(148, 186, 233, 0.35);
-    --clay-pressed: inset 4px 4px 10px rgba(120, 165, 220, 0.45), inset -3px -3px 8px rgba(255, 255, 255, 0.8);
+    --shadow-sm: 0 2px 6px rgba(148, 186, 233, 0.32);
+    --shadow-md: 0 4px 12px rgba(148, 186, 233, 0.32);
+    --shadow-lg: 0 8px 20px rgba(120, 165, 220, 0.32);
+    --shadow-glow: 0 0 14px rgba(59, 130, 246, 0.16);
+    --shadow-glow-cyan: 0 0 14px rgba(8, 145, 178, 0.14);
+    --clay-inset: inset 2px 2px 4px rgba(255, 255, 255, 0.8), inset -2px -2px 5px rgba(148, 186, 233, 0.25);
+    --clay-pressed: inset 3px 3px 7px rgba(120, 165, 220, 0.35), inset -2px -2px 5px rgba(255, 255, 255, 0.7);
 
-    --radius-sm: 14px;
-    --radius-md: 20px;
-    --radius-lg: 26px;
-    --radius-xl: 34px;
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 18px;
+    --radius-xl: 24px;
     --radius-full: 9999px;
 
     --font-primary: 'Inter', 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -949,21 +949,56 @@ body {
     color: var(--text-primary);
 }
 
-/* Cards become clay slabs */
+/* Cards: flat clay slabs — single shadow, thin border for definition
+   (previously stacked shadow + inset emboss on every card; reduced per
+   2026-08-13 declutter pass, inset emboss now reserved for inputs only) */
 .glass-card, .stat-card, .choice-card, .net-worth-card {
     background: var(--bg-card);
-    border: none;
+    border: 1px solid var(--border-glass);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-md), var(--clay-inset);
+    box-shadow: var(--shadow-md);
     backdrop-filter: none;
 }
 .stat-card, .choice-card {
     border-radius: var(--radius-md);
-    box-shadow: var(--shadow-sm), var(--clay-inset);
+    box-shadow: var(--shadow-sm);
 }
 .glass-card:hover, .stat-card:hover {
-    box-shadow: var(--shadow-lg), var(--clay-inset);
+    box-shadow: var(--shadow-lg);
     transform: translateY(-2px);
+}
+
+/* Dead decorative layer under the clay background — never visible, pure cost */
+body::before { display: none; }
+
+/* Stat tier: tertiary — de-emphasized state info (lifestyle/bike/relationship/etc) */
+.stat-tier-tertiary {
+    opacity: 0.82;
+    padding: 0.85rem 1rem;
+}
+.stat-tier-tertiary .stat-icon { font-size: 1.1rem; margin-bottom: 0.3rem; }
+.stat-tier-tertiary .stat-label { font-size: 0.66rem; }
+.stat-tier-tertiary .stat-value { font-size: 0.95rem; }
+
+/* Cash highlight — primary tier, sits with net worth */
+.cash-highlight {
+    display: flex; align-items: center; justify-content: center; gap: 0.6rem;
+    text-align: center; margin: 0 auto 1.25rem; padding: 0.75rem 1.5rem;
+    max-width: 320px;
+}
+.cash-highlight .stat-label { font-size: 0.75rem; }
+.cash-highlight .stat-value { font-size: 1.6rem; }
+
+/* Focus-visible — keyboard users need a visible ring; clay layer doesn't set one on buttons */
+.tab-btn:focus-visible,
+.btn-primary:focus-visible,
+.btn-ghost:focus-visible,
+.btn-glow:focus-visible,
+.btn-glow-success:focus-visible,
+.btn-glow-danger:focus-visible,
+.sell-btn:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
 }
 
 /* Inputs sink INTO the clay */

@@ -2,12 +2,48 @@ import unittest
 from engine.scoring import calculate_financial_health_score, net_worth_component
 from engine.monthly_processor import process_month_for_player
 from models.constants import (
-    ARCHETYPES, SPOUSE_BASE_EXPENSE, MONTHLY_INCOME, LIFESTYLE_COSTS
+    ARCHETYPES, SPOUSE_BASE_EXPENSE, MONTHLY_INCOME, LIFESTYLE_COSTS,
+    INITIAL_BUDGET, WEDDING_COST, MARRIAGE_MONTH
 )
 from engine.market_engine import calculate_inflation_adjustment
 from models.constants import SATISFACTION_START, satisfaction_expense_drift
 
+
+def _net_injection(arch_id):
+    a = ARCHETYPES[arch_id]
+    return a['stocks'] + a['gold'] + a['ef'] - a['loan']
+
+
 class TestMarriageSystem(unittest.TestCase):
+    # ── D-03 regression: net-worth normalization must be archetype-neutral ──
+    def test_injected_assets_discount_the_ratio(self):
+        # For a FIXED net worth, a spouse who brought more assets must not score
+        # HIGHER — the brought assets are resources to grow, not growth. Folding
+        # them into the denominator makes a bigger injection score no higher.
+        nw, month, income = 250000, 12, 4000
+        heavy = net_worth_component(nw, month, income, 55000, WEDDING_COST)
+        light = net_worth_component(nw, month, income, 5000, WEDDING_COST)
+        self.assertLess(heavy, light)
+
+    def test_capital_preservation_scores_equally_across_archetypes(self):
+        # A player who exactly preserves their TOTAL household resources (ratio 1)
+        # must get the identical net-worth score no matter which archetype they
+        # married. Before D-03 the asset-heavy archetypes scored higher for the
+        # same skill because their brought assets were missing from the denominator.
+        month = 12
+        married_months = month - MARRIAGE_MONTH + 1
+        scores = []
+        for arch_id, arc in ARCHETYPES.items():
+            resources = (INITIAL_BUDGET + MONTHLY_INCOME * (month - 1)
+                         + arc['income'] * married_months
+                         + _net_injection(arch_id) - WEDDING_COST)
+            # net worth == resources ⇒ ratio 1.0 for every archetype
+            s = net_worth_component(resources, month, arc['income'],
+                                    _net_injection(arch_id), WEDDING_COST)
+            scores.append(round(s, 6))
+        self.assertEqual(len(set(scores)), 1,
+                         f"net-worth score not archetype-neutral at ratio 1: {scores}")
+
     def test_net_worth_normalization_with_spouse_income(self):
         # Without spouse income
         nw_score_single = net_worth_component(net_worth=100000, month=6, spouse_income=0.0)

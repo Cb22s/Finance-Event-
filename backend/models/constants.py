@@ -99,6 +99,16 @@ TRUST_SCORE_GAIN = {
 }
 TRUST_IGNORE_PENALTY = -1  # Penalty for ignoring social events repeatedly
 
+# ──── VALID RELATIVE TYPES (C-01) ────
+# The BACKEND is authoritative for which relatives a player may help. Without an
+# allow-list, /handle-relative accepted any string, so a player could mint a fresh
+# idempotency key per invented name and bypass the "one help per relative per
+# month" cap (farming trust, which shifts event probabilities). The relative-help
+# UI panel is currently retired (see frontend/js/dashboard.js), so this endpoint is
+# reachable only by direct API calls; this list keeps it bounded and fair. If the
+# relative mechanic is revived from public.relative_events, source the set there.
+VALID_RELATIVE_TYPES = {"parents", "sibling", "in_laws"}
+
 # ──── EVENT PROBABILITY WEIGHTS ────
 # Used by the dynamic event engine
 EVENT_BASE_PROBABILITIES = {

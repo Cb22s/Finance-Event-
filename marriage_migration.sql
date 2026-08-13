@@ -20,11 +20,18 @@ CREATE TABLE IF NOT EXISTS public.spouse_archetypes (
 );
 
 -- Seed spouse_archetypes
+-- ⚠ CANONICAL SOURCE OF TRUTH IS backend/models/constants.py ARCHETYPES.
+-- These rows are a MIRROR of that dict and MUST stay byte-for-byte in sync with
+-- it (income, expense_mod, stocks, gold, ef, loan). The backend engine reads the
+-- Python constant, NOT this table, so any drift here is silently wrong AND — via
+-- the ON CONFLICT DO UPDATE below — a re-run would overwrite the tuned live values
+-- with whatever is written here. test_archetype_source_consistency guards this.
+-- Values below match constants.ARCHETYPES as of the 2026-08-13 audit (D-01 fix).
 INSERT INTO public.spouse_archetypes (id, name, income, expense_mod, stocks, gold, ef, loan, description) VALUES
-('saver', 'The Saver', 10000, -9000, 0, 8000, 22000, 0, 'Strong expense discipline, small emergency buffer. Low income; limited upside.'),
-('earner', 'The Earner', 36000, 12000, 0, 0, 0, 0, 'High second income, but higher lifestyle expense and event exposure.'),
-('investor', 'The Investor', 9000, -1000, 44000, 20000, 24000, 0, 'Brings an existing portfolio of stocks, gold, and cash. Volatile but high potential.'),
-('anchor', 'The Anchor', 14000, -2000, 8000, 0, 45000, 0, 'Stable income and a well-funded emergency fund. Predictable and solid.')
+('saver', 'The Saver', 5000, -2500, 0, 12000, 23000, 0, 'Runs the household lean and brings gold and savings. Low income, but she cuts your monthly costs and hands you a cushion.'),
+('earner', 'The Earner', 16000, 3500, 0, 0, 5000, 0, 'The strongest second income by far, but a bigger lifestyle to match. Steady cash every month, almost nothing up front.'),
+('investor', 'The Investor', 4000, -500, 35000, 16000, 4000, 0, 'Brings a built portfolio rather than a salary. Worth the most if the market rises, the least if it stalls — a bet on the economy.'),
+('anchor', 'The Anchor', 7000, -500, 5000, 0, 35000, 0, 'A large emergency fund and dependable income. Boring on paper; the reason you survive a bad month.')
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
   income = EXCLUDED.income,

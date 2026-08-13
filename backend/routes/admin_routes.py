@@ -49,6 +49,9 @@ def start_game():
         # ADR-014: negotiations are PLAYER data and must not survive a restart,
         # or the engine reads last game's rounds as already-settled for month N.
         supabase.table('player_negotiations').delete().neq('user_id', dummy).execute()
+        # B-01: monthly allocation records are per-game player data too — wipe them
+        # so a new game's dashboard never shows a previous game's allocation.
+        supabase.table('player_month_allocations').delete().neq('user_id', dummy).execute()
 
         # ────────────────────────────────────────────────────────────────
         # AUTHORED CONTENT IS **NOT** WIPED.
@@ -114,9 +117,21 @@ def next_month():
             "message": f"Month {TOTAL_MONTHS} completed. Game officially ended!"
         })
 
+    # A-02: freeze player mutations for the WHOLE read → compute → write cycle.
+    # require_playable() rejects every mutating player endpoint while game_status is
+    # 'processing', so no player action can land between get_all_players() below and
+    # the atomic write and be silently overwritten by the monthly result. Restored
+    # to 'active' in every exit path below (including errors) so the game is never
+    # left stuck in 'processing'.
+    supabase.table('game_control').update({'game_status': 'processing'}).eq('id', 1).execute()
+
+    def _restore_active():
+        supabase.table('game_control').update({'game_status': 'active'}).eq('id', 1).execute()
+
     # Fetch all data
     players = get_all_players()
     if not players:
+        _restore_active()
         return jsonify({"error": "No players found to process."}), 400
 
     admin_events = get_admin_events_for_month(next_m)
@@ -194,6 +209,7 @@ def next_month():
     # Validate the batch payload
     err = validate_rpc_payload(updates_state, updates_loans, inserts_loans, inserts_logs)
     if err:
+        _restore_active()
         return jsonify({"error": f"Validation failed: {err}"}), 500
 
     # Execute atomically via RPC
@@ -207,16 +223,20 @@ def next_month():
 
     try:
         supabase.rpc('process_month_atomically', payload).execute()
-        return jsonify({
-            "message": f"Success! Advanced to Month {next_m}.",
-            "month": next_m,
-            "market": market_scenario,
-            "players_processed": len(players),
-            "events_triggered": len(all_event_summaries),
-            "event_details": all_event_summaries[:20]  # Limit for response size
-        })
     except Exception as e:
+        _restore_active()
         return jsonify({"error": f"Database processing failed: {e}"}), 500
+
+    # Processing done — reopen the game to players (RPC already advanced the month).
+    _restore_active()
+    return jsonify({
+        "message": f"Success! Advanced to Month {next_m}.",
+        "month": next_m,
+        "market": market_scenario,
+        "players_processed": len(players),
+        "events_triggered": len(all_event_summaries),
+        "event_details": all_event_summaries[:20]  # Limit for response size
+    })
 
 
 # ──────────────────────────────────────────────
@@ -431,20 +451,17 @@ def update_player():
     discipline_avg = float(merged.get('discipline_score', 100) or 100)
     total_assets = (risk_state['cash'] + risk_state['stocks']
                      + risk_state['gold'] + risk_state['emergency_fund'])
-    spouse_income = 0.0
-    spouse_arch_id = merged.get('spouse_archetype')
-    if spouse_arch_id and spouse_arch_id != 'single':
-        from models.constants import ARCHETYPES
-        arc = ARCHETYPES.get(spouse_arch_id)
-        if arc:
-            spouse_income = arc['income']
+    # D-09: same scorer contract as the engine — income + injected assets + wedding.
+    from engine.scoring import spouse_score_inputs
+    spouse_income, spouse_assets, wedding_cost = spouse_score_inputs(merged.get('spouse_archetype'))
 
     score_result = calculate_financial_health_score(
         net_worth=net_worth, month=month,
         emergency_fund=risk_state['emergency_fund'], monthly_expense=monthly_expense,
         loans=risk_state['loans'], total_assets=total_assets,
         risk_score=risk_level, discipline_avg=discipline_avg,
-        spouse_income=spouse_income
+        spouse_income=spouse_income,
+        spouse_assets=spouse_assets, wedding_cost=wedding_cost
     )
     fields['risk_level'] = risk_level
     fields['financial_health_score'] = score_result['score']
@@ -785,9 +802,14 @@ def reset_player():
     if not uid:
         return jsonify({"error": "user_id is required."}), 400
     try:
+        # B-01: complete reset contract — every per-game, player-scoped table.
+        # Previously player_negotiations and player_month_allocations were omitted,
+        # so a reset player could not negotiate (old rounds read as 'already
+        # settled') and saw stale allocation records on the dashboard.
         for table in ['player_state', 'player_loans', 'player_sales',
                       'player_relative_score', 'player_relative_actions',
-                      'player_month_log', 'player_month_actions', 'player_spouse_reveals']:
+                      'player_month_log', 'player_month_actions', 'player_spouse_reveals',
+                      'player_negotiations', 'player_month_allocations']:
             supabase.table(table).delete().eq('user_id', uid).execute()
     except Exception as e:
         return jsonify({"error": f"Reset failed: {e}"}), 500

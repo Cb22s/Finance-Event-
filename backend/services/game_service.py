@@ -265,3 +265,86 @@ def validate_rpc_payload(updates_state, updates_loans, inserts_loans, inserts_lo
         if missing:
             return f"inserts_logs[{i}] missing: {missing}"
     return None
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# A-01 — ATOMIC PLAYER MUTATION (row-serialised)
+# One primitive for every cash-mutating route. Wraps public.player_apply_atomic,
+# which locks the player row FOR UPDATE, re-checks affordability under the lock,
+# and applies ADDITIVE deltas so concurrent different actions compose correctly.
+# Economic formulas stay in the Python callers; this only serialises the apply.
+# ════════════════════════════════════════════════════════════════════════════
+_TXN_ERROR_KINDS = ('DUPLICATE_ACTION', 'INSUFFICIENT_CASH', 'PLAYER_NOT_FOUND')
+
+
+class PlayerTxnError(Exception):
+    """Raised for an expected, mapped failure from player_apply_atomic."""
+    def __init__(self, kind: str):
+        super().__init__(kind)
+        self.kind = kind
+
+
+def _txn_error_kind(exc: Exception) -> str | None:
+    text = (str(getattr(exc, 'message', '') or '') + ' ' + str(exc)).upper()
+    for k in _TXN_ERROR_KINDS:
+        if k in text:
+            return k
+    return None
+
+
+def apply_player_txn(user_id: str, month: int, *, action_key: str | None = None,
+                     require_cash: float | None = None, deltas: dict | None = None,
+                     sets: dict | None = None, clamp_satisfaction: bool = False,
+                     recompute_networth: bool = False,
+                     loan_inserts: list | None = None,
+                     loan_updates: list | None = None) -> dict:
+    """
+    Apply an atomic, row-serialised mutation to a player. Returns the fresh
+    player_state row (dict). Raises PlayerTxnError(kind) for the three expected
+    failures (DUPLICATE_ACTION / INSUFFICIENT_CASH / PLAYER_NOT_FOUND); any other
+    exception propagates unchanged.
+    """
+    try:
+        res = supabase.rpc('player_apply_atomic', {
+            'p_user_id': user_id,
+            'p_month': int(month),
+            'p_action_key': action_key,
+            'p_require_cash': require_cash,
+            'p_deltas': deltas or {},
+            'p_sets': sets or {},
+            'p_clamp_satisfaction': bool(clamp_satisfaction),
+            'p_recompute_networth': bool(recompute_networth),
+            'p_loan_inserts': loan_inserts or [],
+            'p_loan_updates': loan_updates or [],
+        }).execute()
+    except Exception as e:
+        kind = _txn_error_kind(e)
+        if kind:
+            raise PlayerTxnError(kind)
+        raise
+    return res.data
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# A-02 — ONE authoritative "may this player mutate now?" rule.
+# A player may act only when the game is ACTIVE and their own turn is not locked
+# ('waiting'). While a month is being processed the admin sets game_status to
+# 'processing', which this rejects — so no player action can be silently
+# overwritten by the monthly result.
+# ════════════════════════════════════════════════════════════════════════════
+def require_playable(user_id: str):
+    """Returns (player, game, None) if the player may mutate, else (None, None, (msg, code))."""
+    game = get_game_state()
+    if not game:
+        return None, None, ("Game control not found.", 500)
+    gstatus = game.get('game_status')
+    if gstatus == 'processing':
+        return None, None, ("The month is being processed — try again in a moment.", 409)
+    if gstatus != 'active':
+        return None, None, ("Game is not currently active.", 400)
+    player = get_player(user_id)
+    if not player:
+        return None, None, ("No player state found.", 404)
+    if player.get('status') == 'waiting':
+        return None, None, ("Your turn is locked. Wait for the next month.", 400)
+    return player, game, None

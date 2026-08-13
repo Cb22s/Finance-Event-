@@ -271,7 +271,12 @@ def generate_events_for_player(player: dict, month: int, admin_events: list = No
                 "impact_target": ev.get('impact_target', 'cash'),
                 "value": float(ev.get('value', 0)),
                 "severity": "admin",
-                "category": "admin"
+                # D-08: honour the AUTHORED category so insurance eligibility is the
+                # same whether events fire in auto mode or manual mode. Previously
+                # this was hard-coded to 'admin' (uninsurable) here but used the
+                # authored category in manual mode, so the same authored medical
+                # emergency paid out under manual and not under auto.
+                "category": ev.get('category', 'general')
             })
 
     return events
