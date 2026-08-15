@@ -186,7 +186,7 @@
             return ['alloc' + m, 'alert',
                 `You have <strong>${rs(alloc.available_cash)}</strong> sitting idle! Open the <strong>Invest</strong> tab and put it to work. 📈`];
 
-        if (m === 6 && data.game && data.game.marriage_round_active && !p.spouse_archetype)
+        if (data.courtship && m === data.courtship.marriage_month && data.game && data.game.marriage_round_active && !p.spouse_archetype)
             return ['wed' + m, 'excited',
                 "It's the <strong>marriage round</strong>! 💍 Use your free dates to reveal traits first — decide with your head, not just your heart. 😄"];
 

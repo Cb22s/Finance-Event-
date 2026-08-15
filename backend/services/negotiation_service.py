@@ -106,7 +106,8 @@ def generate_proposal(user_id: str, month: int, archetype_id: str,
 
 
 def evaluate(intent: str, params: dict, proposal: dict, round_no: int,
-             satisfaction: float, player_cash: float) -> dict:
+             satisfaction: float, player_cash: float,
+             argument_features: dict = None, previous_category: str = None) -> dict:
     """
     Decide the outcome of one negotiation turn.
 
@@ -119,21 +120,35 @@ def evaluate(intent: str, params: dict, proposal: dict, round_no: int,
           satisfaction_delta: int,
           effects: dict,           # financial deltas for the caller to apply
           reason: str,             # why, in plain language (shown to the player)
-          required_minimum: float  # what she would have accepted this round
+          required_minimum: float, # what she would have accepted this round
+          character_eval: dict     # evaluated character features & floor ratio (Stage 3B)
         }
     """
     ask = float(proposal["ask"])
     arch = proposal["archetype_id"]
-    min_ratio = negotiation_min_ratio(arch, satisfaction)
+
+    char_eval = None
+    if argument_features is not None:
+        from services.spouse_character_service import evaluate_spouse_character
+        char_eval = evaluate_spouse_character(
+            arch, argument_features, satisfaction, round_no, previous_category
+        )
+        min_ratio = char_eval["effective_floor_ratio"]
+    else:
+        min_ratio = negotiation_min_ratio(arch, satisfaction)
+
     required = round(ask * min_ratio, 2)
 
     def out(resolved, outcome, amount, delta, effects, reason):
-        return {
+        res = {
             "resolved": resolved, "outcome": outcome,
             "agreed_amount": round(amount, 2),
             "satisfaction_delta": delta, "effects": effects,
             "reason": reason, "required_minimum": required,
         }
+        if char_eval:
+            res["character_eval"] = char_eval
+        return res
 
     # ── Free actions: no money, no resolution ──
     if intent == ASK_QUESTION:

@@ -18,9 +18,10 @@ from models.constants import (
     LIFESTYLE_COSTS, ARCHETYPES, WEDDING_COST, SPOUSE_BASE_EXPENSE, MARRIAGE_MONTH,
     MONTHLY_INCOME, LOAN_INTEREST_RATE, LOAN_TERM_OPTIONS, LOAN_MIN_AMOUNT,
     MAX_TOTAL_DEBT_MULTIPLE, MAX_EMI_TO_INCOME, INSURANCE_PLANS,
-    NEGOTIATION_MAX_ROUNDS, SATISFACTION_START
+    NEGOTIATION_MAX_ROUNDS, SATISFACTION_START, FESTIVAL_EVENT
 )
 from services import negotiation_service as negsvc
+from services import festival_service
 from services import ai_service
 from models.negotiation_intents import IntentError, validate
 from engine.monthly_processor import _amortized_emi
@@ -620,7 +621,14 @@ def _negotiation_context(user_id, player, game):
     except Exception:
         catalogue = []
 
-    proposal = negsvc.generate_proposal(user_id, month, arch, catalogue)
+    if month == FESTIVAL_EVENT["month"]:
+        # Month-6 family festival (Stage 2 + Phase 3A): the festival IS this
+        # month's conversation. Character-adjusted INITIAL ask only — same
+        # proposal shape, same deterministic/idempotent rule, and the
+        # negotiation engine downstream is untouched.
+        proposal = festival_service.generate_festival_budget(user_id, month, arch)
+    else:
+        proposal = negsvc.generate_proposal(user_id, month, arch, catalogue)
     if not proposal:
         return None, "She has nothing to raise this month."
 
@@ -662,6 +670,7 @@ def negotiate_interpret():
     text = (request.json or {}).get('message', '')
     try:
         extracted = ai_service.extract_intent(text, ctx['proposal'])
+        arg_features = ai_service.extract_argument_features(text, ctx['proposal'])
     except IntentError as e:
         # Rejected, never guessed. Hand it back for rephrasing.
         return jsonify({"error": str(e), "needs_rephrase": True}), 400
@@ -680,6 +689,7 @@ def negotiate_interpret():
         "intent": extracted['intent'],
         "params": extracted['params'],
         "ai_source": extracted['ai_source'],
+        "argument_features": arg_features,
         "confirmation": _confirmation_text(extracted, ctx['proposal']),
         "round": ctx['round'],
         "max_rounds": NEGOTIATION_MAX_ROUNDS,
@@ -736,7 +746,7 @@ def negotiate_commit():
     # re-creates the pending row: self-healing, never a money hole.
     try:
         pending = (supabase.table('player_negotiations')
-                   .select('id')
+                   .select('*')
                    .eq('user_id', user_id).eq('month', ctx['month'])
                    .eq('round', ctx['round']).eq('intent', intent)
                    .eq('confirmed', False).eq('outcome', 'pending')
@@ -749,11 +759,23 @@ def negotiate_commit():
             "needs_rephrase": True,
         }), 400
 
+    # Extract argument features from the player's text for character evaluation
+    raw_text = body.get('message') or (pending[0].get('raw_text') if pending else '')
+    arg_features = ai_service.extract_argument_features(raw_text, ctx['proposal'])
+
+    prev_cat = None
+    if ctx.get('history'):
+        prev_confirmed = [r for r in ctx['history'] if r.get('confirmed')]
+        if prev_confirmed:
+            rule_in = prev_confirmed[-1].get('rule_input') or {}
+            prev_cat = rule_in.get('primary_category')
+
     # ── DETERMINISTIC. No network. This is the only thing that decides money. ──
     result = negsvc.evaluate(
         intent=intent, params=params, proposal=ctx['proposal'],
         round_no=ctx['round'], satisfaction=ctx['satisfaction'],
         player_cash=float(player.get('cash', 0)),
+        argument_features=arg_features, previous_category=prev_cat,
     )
 
     new_sat = negsvc.clamp_satisfaction(ctx['satisfaction'] + result['satisfaction_delta'])
@@ -859,8 +881,8 @@ def lock_turn():
                      f"Distribute it before completing Month {month}."
         }), 400
 
-    # Guard: in Month 6, players must choose a spouse or single before locking
-    if player.get('month') == 6 and not player.get('spouse_archetype'):
+    # Guard: in the marriage month, players must choose a spouse or single before locking
+    if player.get('month') == MARRIAGE_MONTH and not player.get('spouse_archetype'):
         game = get_game_state()
         if game.get('marriage_round_active'):
             return jsonify({"error": "You must choose to marry or stay single before completing Month 6."}), 400
@@ -1078,8 +1100,8 @@ def courtship_reveal():
     if gerr:
         return jsonify({"error": gerr[0]}), gerr[1]
 
-    if player['month'] != 6 or not game.get('marriage_round_active'):
-        return jsonify({"error": "Courtship is only available when the marriage round is active in Month 6."}), 400
+    if player['month'] != MARRIAGE_MONTH or not game.get('marriage_round_active'):
+        return jsonify({"error": f"Courtship is only available when the marriage round is active in Month {MARRIAGE_MONTH}."}), 400
 
     data = request.json or {}
     archetype_id = data.get('archetype_id')
@@ -1156,8 +1178,8 @@ def courtship_marry():
     if gerr:
         return jsonify({"error": gerr[0]}), gerr[1]
 
-    if player['month'] != 6 or not game.get('marriage_round_active'):
-        return jsonify({"error": "Marriage round is only available when active in Month 6."}), 400
+    if player['month'] != MARRIAGE_MONTH or not game.get('marriage_round_active'):
+        return jsonify({"error": f"Marriage round is only available when active in Month {MARRIAGE_MONTH}."}), 400
 
     if player.get('spouse_archetype'):
         return jsonify({"error": "You have already made a marriage decision."}), 400
@@ -1188,7 +1210,7 @@ def courtship_marry():
             return jsonify({"error": "Could not process. No changes made."}), 400
         try:
             supabase.table('player_month_log').insert({
-                "user_id": user_id, "month": 6,
+                "user_id": user_id, "month": MARRIAGE_MONTH,
                 "starting_cash": cash, "ending_cash": cash,
                 "net_worth": player.get('net_worth', 0),
                 "summary": "💍 You chose to stay single and focus on your individual goals."
@@ -1231,7 +1253,7 @@ def courtship_marry():
     spouse_assets = arc['stocks'] + arc['gold'] + arc['ef'] - arc['loan']
 
     score_result = calculate_financial_health_score(
-        net_worth=net_worth, month=6,
+        net_worth=net_worth, month=MARRIAGE_MONTH,
         emergency_fund=proj_ef, monthly_expense=adjusted_living,
         loans=proj_loans, total_assets=proj_cash + proj_stocks + proj_gold + proj_ef,
         risk_score=risk_level, discipline_avg=discipline_avg,
@@ -1278,7 +1300,7 @@ def courtship_marry():
     )
     try:
         supabase.table('player_month_log').insert({
-            "user_id": user_id, "month": 6,
+            "user_id": user_id, "month": MARRIAGE_MONTH,
             "starting_cash": player['cash'], "ending_cash": round(proj_cash, 2),
             "net_worth": round(net_worth, 2), "summary": summary
         }).execute()

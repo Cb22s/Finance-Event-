@@ -165,7 +165,7 @@ DISCIPLINE_AUTO_LOAN = 0          # Cash crisis forced an auto-loan
 # The design intent survives: The Investor ranks ABOVE "stay single" when the
 # market grows and BELOW it when the market is flat, so the spouse choice is a
 # genuine read on the economy the admin authors, not a coin flip.
-MARRIAGE_MONTH = 6
+MARRIAGE_MONTH = 4
 # Your personal share of the wedding AFTER family contributions and cash gifts —
 # not the total cost of the event. Priced so it is a real dent (about 2 months of
 # surplus) without being the liquidity landmine Rs88,000 had become.
@@ -186,7 +186,7 @@ ARCHETYPES = {
     "earner": {
         "name": "The Earner",
         "income": 16000,
-        "expense_mod": 3500,
+        "expense_mod": 4500,
         "stocks": 0,
         "gold": 0,
         "ef": 5000,
@@ -196,7 +196,7 @@ ARCHETYPES = {
     "investor": {
         "name": "The Investor",
         "income": 4000,
-        "expense_mod": -500,
+        "expense_mod": -1500,
         "stocks": 35000,
         "gold": 16000,
         "ef": 4000,
@@ -214,6 +214,49 @@ ARCHETYPES = {
         "description": "A large emergency fund and dependable income. Boring on paper; the reason you survive a bad month."
     }
 }
+
+# ──── MONTH-6 FAMILY FESTIVAL (Stage 2) + SPOUSE CHARACTER TRAITS (Phase 3A) ────
+# The festival is ONE instance of the existing proposal mechanic: a seeded,
+# deterministic ask handed to the UNCHANGED negotiation engine. The ask is the
+# only thing character traits touch in Phase 3A. Floors, counteroffers,
+# satisfaction and rounds all remain archetype-based (negotiation_service).
+FESTIVAL_EVENT = {
+    "id": "festival_m6",
+    "month": MARRIAGE_MONTH + 2,   # = 6; auto-tracks marriage timing
+    "title": "The family festival",
+    "description": ("The big family festival is coming. Both families will attend, "
+                    "and she wants the household to host it properly — outfits, food, "
+                    "gifts and the function itself."),
+    "kind": "festival",            # no financial return, like 'lifestyle' — that is the lesson
+    "base_k": 0.50,                 # Stage-3A approved Model C calibration: 0.50x Monthly Surplus anchor
+    "importance": 1.08,            # Stage-2 calibration: per-event social weight
+    "ev_note": "Pure consumption — nothing comes back financially. What matters is "
+               "what you protect while honouring it.",
+}
+
+# Posture: how the spouse's economic spend-lean (expense_mod) scales her ask.
+POSTURE_SCALE = 30000
+POSTURE_MIN, POSTURE_MAX = 0.85, 1.20
+
+# Stage-2 guardrails on the final ask, as ratios of household income (HHI).
+# Dormant at current values — safety rails against extreme future CharAdj.
+FESTIVAL_MIN_RATIO = 0.25
+FESTIVAL_CAP_RATIO = 1.50
+
+# ── Phase 3A character traits (0–100) ──
+# PRU financial prudence · STA status sensitivity · FAM family/tradition weight ·
+# FLX flexibility. FLX is RESERVED for Phase 3B negotiation and deliberately does
+# NOT enter CharAdj. Frugality is not a trait — the economic archetype
+# (income/expense_mod) already carries it; duplicating it would double-count.
+CHARACTER_PROFILES = {
+    "saver":    {"PRU": 70, "STA": 30, "FAM": 85, "FLX": 55},
+    "earner":   {"PRU": 35, "STA": 90, "FAM": 55, "FLX": 40},
+    "investor": {"PRU": 90, "STA": 40, "FAM": 35, "FLX": 65},
+    "anchor":   {"PRU": 60, "STA": 45, "FAM": 80, "FLX": 50},
+}
+
+# CharAdj clamp (Stage-3 approved): keeps character influence bounded.
+CHAR_ADJ_MIN, CHAR_ADJ_MAX = 0.85, 1.25
 
 # ──── MARKET SCENARIO REGIMES (2026-07-21) ────
 # Stocks and gold are no longer drawn independently. Each month resolves to ONE

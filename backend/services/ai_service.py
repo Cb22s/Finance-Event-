@@ -78,6 +78,69 @@ def extract_intent(text: str, proposal: dict) -> dict:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 1b. ARGUMENT FEATURE EXTRACTION (Stage 3B)
+# ──────────────────────────────────────────────────────────────────────────────
+def extract_argument_features(text: str, proposal: dict) -> dict:
+    """
+    Extract structured argument features from natural language text.
+
+    Returns:
+        {
+          "primary_category": "FINANCIAL" | "FAMILY" | "STATUS" | "FUTURE" | "FAIRNESS",
+          "secondary_category": str or None,
+          "argument_quality": float (0.0 .. 1.0),
+          "appeals_to_values": list[str],
+          "contains_logical_reasoning": bool,
+          "is_aggressive_or_dismissive": bool,
+          "confidence_score": float (0.0 .. 1.0),
+          "ai_source": "llm" | "fallback"
+        }
+
+    SAFETY GUARANTEE: NEVER extracts or returns monetary decision fields.
+    Falls back gracefully to default neutral features on any network or parsing error.
+    """
+    from services.spouse_character_service import (
+        validate_argument_features, DEFAULT_ARGUMENT_FEATURES, VALID_PRIMARY_CATEGORIES
+    )
+
+    if not text or len(text.strip()) < 3:
+        res = validate_argument_features(DEFAULT_ARGUMENT_FEATURES)
+        res["ai_source"] = "fallback"
+        return res
+
+    if llm_available():
+        try:
+            raw = _anthropic_json(
+                system=(
+                    "You analyze the reasoning in a player's natural-language message during a "
+                    "financial negotiation with their in-game spouse. Extract structured features ONLY. "
+                    "Do NOT decide monetary outcomes, prices, or decisions. Reply with ONLY a JSON object: "
+                    "{\n"
+                    f'  "primary_category": <one of {sorted(VALID_PRIMARY_CATEGORIES)}>,\n'
+                    '  "secondary_category": <one of ' + str(sorted(VALID_PRIMARY_CATEGORIES)) + ' or null>,\n'
+                    '  "argument_quality": <float 0.0 to 1.0 measuring logical depth>,\n'
+                    '  "appeals_to_values": [<strings from "prudence", "family", "status", "future_security", "fairness">],\n'
+                    '  "contains_logical_reasoning": <boolean>,\n'
+                    '  "is_aggressive_or_dismissive": <boolean>,\n'
+                    '  "confidence_score": <float 0.0 to 1.0>\n'
+                    "}"
+                ),
+                user=f"Spouse proposal: Rs{proposal['ask']:,} for '{proposal['title']}'.\n"
+                     f"Player said: '{text}'"
+            )
+            data = json.loads(raw)
+            features = validate_argument_features(data)
+            features["ai_source"] = "llm"
+            return features
+        except Exception:
+            pass  # Fall through to deterministic fallback on any LLM/network error
+
+    res = validate_argument_features(DEFAULT_ARGUMENT_FEATURES)
+    res["ai_source"] = "fallback"
+    return res
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 2. NARRATION
 # ──────────────────────────────────────────────────────────────────────────────
 _FALLBACK_LINES = {

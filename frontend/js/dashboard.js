@@ -243,7 +243,7 @@ async function loadDashboard() {
         const courtshipSec = document.getElementById('courtshipSection');
         const courtship = data.courtship;
         if (courtshipSec && courtship) {
-            if (p.month === 6 && g.marriage_round_active && !p.spouse_archetype) {
+            if (p.month === courtship.marriage_month && g.marriage_round_active && !p.spouse_archetype) {
                 courtshipSec.style.display = 'block';
                 const datesUsed = courtship.dates_used || 0;
                 document.getElementById('datesUsedVal').innerText = datesUsed;

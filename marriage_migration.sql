@@ -29,8 +29,8 @@ CREATE TABLE IF NOT EXISTS public.spouse_archetypes (
 -- Values below match constants.ARCHETYPES as of the 2026-08-13 audit (D-01 fix).
 INSERT INTO public.spouse_archetypes (id, name, income, expense_mod, stocks, gold, ef, loan, description) VALUES
 ('saver', 'The Saver', 5000, -2500, 0, 12000, 23000, 0, 'Runs the household lean and brings gold and savings. Low income, but she cuts your monthly costs and hands you a cushion.'),
-('earner', 'The Earner', 16000, 3500, 0, 0, 5000, 0, 'The strongest second income by far, but a bigger lifestyle to match. Steady cash every month, almost nothing up front.'),
-('investor', 'The Investor', 4000, -500, 35000, 16000, 4000, 0, 'Brings a built portfolio rather than a salary. Worth the most if the market rises, the least if it stalls — a bet on the economy.'),
+('earner', 'The Earner', 16000, 4500, 0, 0, 5000, 0, 'The strongest second income by far, but a bigger lifestyle to match. Steady cash every month, almost nothing up front.'),
+('investor', 'The Investor', 4000, -1500, 35000, 16000, 4000, 0, 'Brings a built portfolio rather than a salary. Worth the most if the market rises, the least if it stalls — a bet on the economy.'),
 ('anchor', 'The Anchor', 7000, -500, 5000, 0, 35000, 0, 'A large emergency fund and dependable income. Boring on paper; the reason you survive a bad month.')
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,

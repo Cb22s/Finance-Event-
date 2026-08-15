@@ -16,8 +16,16 @@ from models.constants import (
     STOCK_BASE_GROWTH, GOLD_BASE_GROWTH, EMERGENCY_FUND_GROWTH,
     INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH,
     MARRIAGE_MONTH, WEDDING_COST, SPOUSE_BASE_EXPENSE,
-    ARCHETYPES as _GAME_ARCHETYPES,
+    ARCHETYPES as _GAME_ARCHETYPES, FESTIVAL_EVENT,
 )
+from services.festival_service import compute_festival_ask
+
+# ── PHASE 3A: Month-6 festival cost (character-adjusted initial ask) ──
+# Modeled at the FULL initial ask — the worst case, a player who never
+# negotiates. Negotiation can only reduce this (floor 50-70% of ask), so if
+# the gates pass here they pass for every negotiated outcome as well.
+FESTIVAL_ASKS = {a["name"]: compute_festival_ask(aid)
+                 for aid, a in _GAME_ARCHETYPES.items()}
 
 # All marriage numbers are now IMPORTED from models/constants.py above.
 # They used to be duplicated here, which is precisely how the simulator came to
@@ -36,13 +44,15 @@ STRATEGIES = {
 }
 
 
-try:
-    from supabase_client import supabase
-    db_events = supabase.table("events").select("*").execute().data or []
-    print(f"Loaded {len(db_events)} events from Supabase for the simulation.")
-except Exception as e:
-    print(f"Warning: Could not fetch events from database ({e}). Running simulation with hardcoded default behavior.")
-    db_events = []
+# DB events fetch (offline safe)
+db_events = []
+if os.environ.get("USE_SUPABASE_SIM") == "1":
+    try:
+        from supabase_client import supabase
+        db_events = supabase.table("events").select("*").execute().data or []
+        print(f"Loaded {len(db_events)} events from Supabase for the simulation.")
+    except Exception as e:
+        print(f"Warning: Could not fetch events from database ({e}). Running simulation with default behavior.")
 
 events_by_month = {}
 for ev in db_events:
@@ -60,8 +70,11 @@ def expense_for(month, lifestyle="city"):
     return base * ((1 + INFLATION_RATE_PER_MONTH) ** n)
 
 
-def simulate(archetype_name, strategy_name, market_on: bool, lifestyle="city"):
+def simulate(archetype_name, strategy_name, market_on: bool, lifestyle="city", festival_asks=None):
     """Run months 1..12 and return final net worth."""
+    if festival_asks is None:
+        festival_asks = FESTIVAL_ASKS
+
     cash = 0.0; stocks = 0.0; gold = 0.0; ef = 0.0; loans = 0.0
     arc = ARCHETYPES.get(archetype_name)
     mix = STRATEGIES[strategy_name]
@@ -72,6 +85,10 @@ def simulate(archetype_name, strategy_name, market_on: bool, lifestyle="city"):
             cash -= WEDDING_COST
             stocks += arc["stocks"]; gold += arc["gold"]; ef += arc["ef"]
             loans += arc["loan"]
+
+        # Phase 3A: the family festival lands two months after the wedding.
+        if arc and month == FESTIVAL_EVENT["month"]:
+            cash -= festival_asks.get(archetype_name, 0)
 
         income = MONTHLY_INCOME
         expense = expense_for(month, lifestyle)
@@ -124,18 +141,26 @@ def simulate(archetype_name, strategy_name, market_on: bool, lifestyle="city"):
     return cash + stocks + gold + ef - loans
 
 
-def run(market_on: bool):
+def run(market_on: bool, festival_asks=None, title_suffix=""):
+    if festival_asks is None:
+        festival_asks = FESTIVAL_ASKS
+
     label = "MARKET ON (auto growth)" if market_on else "MARKET OFF (admin-authored only)"
+    if title_suffix:
+        label += f" [{title_suffix}]"
+
     print("\n" + "=" * 78)
-    print(f"  {label}   |  marriage month {MARRIAGE_MONTH}, wedding Rs{WEDDING_COST:,}")
+    print(f"  {label}   |  marriage month {MARRIAGE_MONTH}, wedding Rs{WEDDING_COST:,}, "
+          f"festival month {FESTIVAL_EVENT['month']}")
     print("=" * 78)
+    print("Festival Asks:", {k: f"Rs{v:,}" for k, v in festival_asks.items()})
     options = ["(stay single)"] + list(ARCHETYPES.keys())
     strat_names = list(STRATEGIES.keys())
 
     table = {}
     for opt in options:
         arc = None if opt == "(stay single)" else opt
-        table[opt] = {s_: simulate(arc, s_, market_on) for s_ in strat_names}
+        table[opt] = {s_: simulate(arc, s_, market_on, festival_asks=festival_asks) for s_ in strat_names}
 
     means = {o: sum(v.values()) / len(v) for o, v in table.items()}
     baseline = means["(stay single)"]
@@ -172,12 +197,46 @@ def run(market_on: bool):
     print(f"GATE 2 single-vs-archetypes : {single_gap:+5.1f}%  (+/-4%)  {'PASS' if g2 else 'FAIL'}")
     print(f"GATE 3 strict dominance     : {dominant or 'none':<9}          {'PASS' if g3 else 'FAIL'}")
     print("VERDICT:", "PASS - fair choice set" if (g1 and g2 and g3) else "FAIL - needs tuning")
-    return g1 and g2 and g3
+    return {
+        "spread": spread, "single_gap": single_gap, "dominant": dominant,
+        "g1": g1, "g2": g2, "g3": g3, "verdict": (g1 and g2 and g3)
+    }
 
 
 if __name__ == "__main__":
-    s1 = run(market_on=True)
-    s2 = run(market_on=False)
+    from models.constants import ARCHETYPES as GAME_ARCHETYPES, negotiation_min_ratio
+
+    # Baseline asks with CharAdj = 1.0 (RUN A)
+    def ask_no_char(aid):
+        arch = GAME_ARCHETYPES[aid]
+        hhi = MONTHLY_INCOME + arch["income"]
+        mandatory_living = LIFESTYLE_COSTS["city"]["total"] + SPOUSE_BASE_EXPENSE + arch["expense_mod"]
+        surplus_mo = max(1000.0, hhi - mandatory_living)
+        posture = max(0.85, min(1.20, 1.0 + arch["expense_mod"] / 30000.0))
+        return int(round((surplus_mo * FESTIVAL_EVENT["base_k"] * posture * FESTIVAL_EVENT["importance"] * 1.0) / 500.0) * 500)
+
+    asks_run_a = {a["name"]: ask_no_char(aid) for aid, a in GAME_ARCHETYPES.items()}
+    asks_run_b = {a["name"]: compute_festival_ask(aid) for aid, a in GAME_ARCHETYPES.items()}
+    asks_negotiated = {a["name"]: int(round(compute_festival_ask(aid) * negotiation_min_ratio(aid, 60.0) / 500.0) * 500) for aid, a in GAME_ARCHETYPES.items()}
+
+    print("\n" + "#" * 78)
+    print("  RUN A: MODEL C + CharAdj = 1.0 (ISOLATED BASELINE)")
+    print("#" * 78)
+    run(market_on=True, festival_asks=asks_run_a, title_suffix="RUN A - Market ON")
+    run(market_on=False, festival_asks=asks_run_a, title_suffix="RUN A - Market OFF")
+
+    print("\n" + "#" * 78)
+    print("  RUN B: MODEL C + APPROVED CHARACTER ADJUSTMENT (UNNEGOTIATED INITIAL ASKS)")
+    print("#" * 78)
+    run(market_on=True, festival_asks=asks_run_b, title_suffix="RUN B - Market ON")
+    run(market_on=False, festival_asks=asks_run_b, title_suffix="RUN B - Market OFF")
+
+    print("\n" + "#" * 78)
+    print("  RUN B (NEGOTIATED): MODEL C + APPROVED CHARACTER ADJUSTMENT (NEGOTIATED OUTCOMES)")
+    print("#" * 78)
+    run(market_on=True, festival_asks=asks_negotiated, title_suffix="RUN B Negotiated - Market ON")
+    run(market_on=False, festival_asks=asks_negotiated, title_suffix="RUN B Negotiated - Market OFF")
+
     print("\nNOTE: with market OFF, archetype value depends entirely on the market")
     print("events YOU author. Re-run this after the months 2-12 content pack exists.")
 
