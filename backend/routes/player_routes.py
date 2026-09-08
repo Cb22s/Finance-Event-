@@ -24,7 +24,7 @@ from services import negotiation_service as negsvc
 from services import festival_service
 from services import ai_service
 from models.negotiation_intents import IntentError, validate
-from engine.monthly_processor import _amortized_emi
+from engine.monthly_processor import _amortized_emi, household_expenses
 from engine.scoring import calculate_financial_health_score
 from engine.market_engine import (
     calculate_risk_score, resolve_market_scenario, calculate_inflation_adjustment
@@ -48,7 +48,8 @@ def get_status():
 @player_bp.route('/case-study', methods=['GET'])
 def get_case_study():
     res = supabase.table('case_study').select('*').limit(1).execute()
-    return jsonify(res.data[0] if res.data else {})
+    return jsonify({**(res.data[0] if res.data else {}),
+                    'lifestyles': LIFESTYLE_COSTS, 'initial_budget': INITIAL_BUDGET})
 
 
 # ──────────────────────────────────────────────
@@ -62,7 +63,7 @@ def allocate_month1():
         return jsonify({"error": "Unauthorized"}), 401
 
     game = get_game_state()
-    if not game or game['game_status'] != 'active':
+    if not game or game['game_status'] != 'active' or game['current_month'] != 1:
         return jsonify({"error": "Game is not currently active."}), 400
 
     # Check if player already allocated
@@ -151,23 +152,8 @@ def allocate_month1():
         "status": "waiting"
     }
 
-    # D-10: atomically claim the month-1 allocation. The upsert makes player_state
-    # idempotent, but the month_log insert is not — two concurrent first-allocations
-    # would each pass the get_player() pre-check and write a duplicate month-1 log.
-    # The player_month_actions PK makes the second caller lose the claim cleanly.
-    if not mark_action(user_id, 1, allocation_key(1)):
-        return jsonify({"error": "You have already allocated for this game."}), 400
-
     try:
-        supabase.table('player_state').upsert(new_state).execute()
-        supabase.table('player_month_log').insert({
-            "user_id": user_id,
-            "month": 1,
-            "starting_cash": INITIAL_BUDGET,
-            "ending_cash": cash,
-            "net_worth": initial_net_worth,
-            "summary": "💼 Initial Allocation Completed. Your financial journey begins!"
-        }).execute()
+        new_state = supabase.rpc('initialize_player', {'p_state': new_state}).execute().data
     except Exception as e:
         print(f"DEBUG: Allocation Database Error: {e}")
         return jsonify({"error": f"Database processing failed: {str(e)}"}), 500
@@ -199,6 +185,8 @@ def get_dashboard():
 
     # ── Courtship & Spouse metadata ──
     revealed_rows = supabase.table('player_spouse_reveals').select('*').eq('user_id', user_id).execute().data or []
+    for row in revealed_rows:
+        row['revealed_value'] = _get_revealed_value(row['archetype_id'], row['trait_key'])
     
     spouse_options = []
     for arch_id, data in ARCHETYPES.items():
@@ -266,6 +254,7 @@ def get_dashboard():
         "trust_scores": trust_scores,
         "event_logs": event_logs,
         "courtship": courtship,
+        "expenses": household_expenses(player, month),
         "market": market,
         "loan_info": loan_info,
         "allocation": allocation,
@@ -463,9 +452,9 @@ def set_insurance():
         return jsonify({"error": f"Unknown plan. Choose one of {list(INSURANCE_PLANS)}."}), 400
 
     try:
-        supabase.table('player_state').update({
-            "insurance_plan": plan_id
-        }).eq('user_id', user_id).execute()
+        apply_player_txn(user_id, player['month'], sets={'insurance_plan': plan_id})
+    except PlayerTxnError as e:
+        return jsonify({'error': str(e)}), 409
     except Exception as e:
         return jsonify({"error": f"Database processing failed: {str(e)}"}), 500
 
@@ -617,7 +606,7 @@ def _negotiation_context(user_id, player, game):
     month = int(player['month'])
 
     try:
-        catalogue = supabase.table('spouse_proposals').select('*').execute().data or []
+        catalogue = supabase.table('spouse_proposals').select('*').order('id').execute().data or []
     except Exception:
         catalogue = []
 
@@ -637,17 +626,19 @@ def _negotiation_context(user_id, player, game):
                 .select('*').eq('user_id', user_id).eq('month', month)
                 .order('round').execute().data or [])
     except Exception:
-        rows = []
+        return None, "Conversation history is unavailable. Please try again."
 
     if any(r.get('outcome') in ('accepted_full', 'accepted_counter', 'refused',
                                 'delayed', 'auto_resolved') for r in rows):
         return None, "This month's conversation is already settled."
 
     committed = [r for r in rows if r.get('confirmed')]
+    if len(committed) >= NEGOTIATION_MAX_ROUNDS:
+        return None, "This month's conversation has reached its round limit."
     return {
         "archetype": arch, "month": month, "proposal": proposal,
         "round": len(committed) + 1, "history": rows,
-        "satisfaction": float(player.get('spouse_satisfaction', SATISFACTION_START) or SATISFACTION_START),
+        "satisfaction": float(player['spouse_satisfaction'] if player.get('spouse_satisfaction') is not None else SATISFACTION_START),
     }, None
 
 
@@ -684,6 +675,7 @@ def negotiate_interpret():
         }).execute()
     except Exception as e:
         print(f"DEBUG: negotiation audit insert failed: {e}")
+        return jsonify({'error': 'Could not save the interpretation. Please send your message again.'}), 503
 
     return jsonify({
         "intent": extracted['intent'],
@@ -750,9 +742,10 @@ def negotiate_commit():
                    .eq('user_id', user_id).eq('month', ctx['month'])
                    .eq('round', ctx['round']).eq('intent', intent)
                    .eq('confirmed', False).eq('outcome', 'pending')
-                   .limit(1).execute().data or [])
+                   .execute().data or [])
     except Exception:
         pending = []
+    pending = [row for row in pending if row.get('params') == params]
     if not pending:
         return jsonify({
             "error": "Send your message to her first, then confirm what she understood.",
@@ -760,7 +753,7 @@ def negotiate_commit():
         }), 400
 
     # Extract argument features from the player's text for character evaluation
-    raw_text = body.get('message') or (pending[0].get('raw_text') if pending else '')
+    raw_text = pending[0].get('raw_text') or ''
     arg_features = ai_service.extract_argument_features(raw_text, ctx['proposal'])
 
     prev_cat = None
@@ -794,10 +787,21 @@ def negotiate_commit():
             require_cash = cash_out
 
     try:
-        apply_player_txn(
+        updated = apply_player_txn(
             user_id, ctx['month'],
             action_key=f"negotiate:{ctx['month']}:{ctx['round']}",
             require_cash=require_cash, deltas=deltas, clamp_satisfaction=True,
+            recompute_networth=True,
+            sets={'negotiation': {
+                'id': pending[0]['id'], 'round': ctx['round'], 'intent': intent,
+                'params': params, 'outcome': result['outcome'],
+                'rule_input': {'ask': ctx['proposal']['ask'], 'round': ctx['round'],
+                               'satisfaction': ctx['satisfaction'],
+                               'required_minimum': result['required_minimum']},
+                'rule_output': {'outcome': result['outcome'],
+                                'agreed_amount': result['agreed_amount'],
+                                'effects': result['effects']},
+            }},
         )
     except PlayerTxnError as e:
         if e.kind == 'DUPLICATE_ACTION':
@@ -811,22 +815,7 @@ def negotiate_commit():
         print(f"DEBUG: negotiation commit failed: {e}")
         return jsonify({"error": f"Database processing failed: {str(e)}"}), 500
 
-    # Best-effort audit row (money already moved atomically above).
-    try:
-        supabase.table('player_negotiations').insert({
-            "user_id": user_id, "month": ctx['month'], "round": ctx['round'],
-            "raw_text": body.get('message'), "intent": intent, "params": params,
-            "confirmed": True,
-            "rule_input": {"ask": ctx['proposal']['ask'], "round": ctx['round'],
-                           "satisfaction": ctx['satisfaction'],
-                           "required_minimum": result['required_minimum']},
-            "rule_output": {"outcome": result['outcome'],
-                            "agreed_amount": result['agreed_amount'],
-                            "effects": result['effects']},
-            "outcome": result['outcome'], "ai_source": "rules",
-        }).execute()
-    except Exception as e:
-        print(f"DEBUG: negotiation audit insert failed: {e}")
+    new_sat = updated['spouse_satisfaction']
 
     try:
         dialogue = (supabase.table('spouse_dialogue').select('*')
@@ -885,11 +874,12 @@ def lock_turn():
     if player.get('month') == MARRIAGE_MONTH and not player.get('spouse_archetype'):
         game = get_game_state()
         if game.get('marriage_round_active'):
-            return jsonify({"error": "You must choose to marry or stay single before completing Month 6."}), 400
+            return jsonify({"error": f"You must choose to marry or stay single before completing Month {MARRIAGE_MONTH}."}), 400
 
-    supabase.table('player_state').update({
-        'status': 'waiting'
-    }).eq('user_id', user_id).execute()
+    try:
+        apply_player_txn(user_id, month, sets={'status': 'waiting'})
+    except PlayerTxnError as e:
+        return jsonify({'error': str(e)}), 409
 
     return jsonify({"message": "Turn confirmed. Waiting for next month to be processed."})
 
@@ -1120,25 +1110,15 @@ def courtship_reveal():
             "revealed_value": _get_revealed_value(archetype_id, trait_key)
         })
 
-    # Count existing reveals to check cost
-    reveals = supabase.table('player_spouse_reveals').select('*').eq('user_id', user_id).execute().data or []
-    count = len(reveals)
-    cost = 0
-    if count >= 3:
-        cost = 5000
-        cash = float(player.get('cash', 0))
-        if cash < cost:
-            return jsonify({"error": f"Not enough cash for an extra date. Need ₹{cost:,}."}), 400
-        new_cash = cash - cost
-        supabase.table('player_state').update({'cash': new_cash}).eq('user_id', user_id).execute()
-        player['cash'] = new_cash
-
-    # Insert reveal record
-    supabase.table('player_spouse_reveals').insert({
-        'user_id': user_id,
-        'archetype_id': archetype_id,
-        'trait_key': trait_key
-    }).execute()
+    try:
+        updated = apply_player_txn(user_id, player['month'], recompute_networth=True,
+                                  sets={'reveal': {'archetype_id': archetype_id,
+                                                   'trait_key': trait_key}})
+        cost = float(updated['reveal_cost'])
+    except PlayerTxnError as e:
+        return jsonify({'error': str(e)}), 409
+    except Exception:
+        return jsonify({'error': 'Date could not be saved. No money moved.'}), 500
 
     return jsonify({
         "message": f"Successfully went on a date! Spent ₹{cost:,} cash.",
@@ -1265,13 +1245,13 @@ def courtship_marry():
     if arc['loan'] > 0:
         loan_inserts.append({
             "principal": arc['loan'], "current_amount": arc['loan'],
-            "interest_rate": 0.12, "month_taken": 6, "status": "active",
+            "interest_rate": LOAN_INTEREST_RATE, "month_taken": MARRIAGE_MONTH, "status": "active",
         })
 
     # A-01: wedding cost, spouse asset/liability injection, month-6 spouse flow, the
     # 'marry' claim and the spouse-loan insert all commit in ONE row-locked txn.
     try:
-        apply_player_txn(
+        updates = apply_player_txn(
             user_id, MARRIAGE_MONTH, action_key='marry', require_cash=float(WEDDING_COST),
             deltas={
                 "cash": round(net_spouse_flow - WEDDING_COST, 2),
@@ -1296,7 +1276,7 @@ def courtship_marry():
     summary = (
         f"💍 Married {arc['name']}! Paid ₹{WEDDING_COST:,} wedding cost. "
         f"Spouse added assets (Stocks +₹{arc['stocks']:,}, Gold +₹{arc['gold']:,}, EF +₹{arc['ef']:,}). "
-        f"Month 6 spouse flow net: {net_spouse_flow:+,}."
+        f"Month {MARRIAGE_MONTH} spouse flow net: {net_spouse_flow:+,}."
     )
     try:
         supabase.table('player_month_log').insert({
@@ -1307,13 +1287,6 @@ def courtship_marry():
     except Exception as e:
         print(f"DEBUG: marriage month_log insert failed: {e}")
 
-    updates = {
-        "spouse_archetype": choice,
-        "cash": round(proj_cash, 2), "stocks": round(proj_stocks, 2),
-        "gold": round(proj_gold, 2), "emergency_fund": round(proj_ef, 2),
-        "loans": round(proj_loans, 2), "net_worth": round(net_worth, 2),
-        "risk_level": risk_level, "financial_health_score": score_result['score']
-    }
     return jsonify({
         "message": f"Successfully married {arc['name']}!",
         "spouse_archetype": choice,

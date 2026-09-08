@@ -5,15 +5,6 @@
 let isCity = true;
 let hasBike = false;
 
-// Expose lifestyle selector globally
-window.selectLifestyle = function(type) {
-    isCity = (type === 'city');
-    document.getElementById('radioCity').classList.toggle('selected', isCity);
-    document.getElementById('radioOuter').classList.toggle('selected', !isCity);
-    updateFixedExpenses();
-    calculateTotal();
-};
-
 document.addEventListener('DOMContentLoaded', async () => {
     // ── Auth Check ──
     const waitForSession = async () => {
@@ -30,6 +21,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const session = await waitForSession();
     if (!session) return;
+    let economy;
+    try {
+        const response = await fetch(`${API_BASE_URL}/case-study`);
+        if (!response.ok) throw new Error('Expense data unavailable');
+        economy = await response.json();
+        for (const [type, costs] of Object.entries(economy.lifestyles)) {
+            const id = type === 'city' ? 'radioCity' : 'radioOuter';
+            document.querySelector(`#${id} .radio-desc`).textContent =
+                `Base monthly living: ₹${costs.total.toLocaleString('en-IN')}`;
+        }
+    } catch (error) {
+        showToast('Cannot load current living costs. Reload before allocating.', 'error');
+        document.getElementById('btnSubmit').disabled = true;
+        return;
+    }
 
     // ── Check if already allocated ──
     try {
@@ -70,13 +76,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     function updateFixedExpenses() {
-        if (isCity) {
-            valRent.value = 25000;
-            valTransport.value = 5000;
-        } else {
-            valRent.value = 10000;
-            valTransport.value = 5000;
-        }
+        const costs = economy.lifestyles[isCity ? 'city' : 'outer'];
+        valRent.value = costs.rent;
+        valTransport.value = costs.transport;
 
         if (hasBike) {
             valBikeDp.value = 10000;
@@ -174,6 +176,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // Initial calc
+    window.selectLifestyle = function(type) {
+        isCity = type === 'city';
+        document.getElementById('radioCity').classList.toggle('selected', isCity);
+        document.getElementById('radioOuter').classList.toggle('selected', !isCity);
+        updateFixedExpenses();
+        calculateTotal();
+    };
+    updateFixedExpenses();
+    const otherBuckets = [...inputs].filter(input => input.id !== 'valMisc')
+        .reduce((sum, input) => sum + Number(input.value || 0), 0);
+    document.getElementById('valMisc').value = Math.max(0, economy.initial_budget - Number(valRent.value) - Number(valTransport.value) - otherBuckets);
     calculateTotal();
 });
 

@@ -239,7 +239,9 @@ PLAYER_STATE_REQUIRED = {
     'user_id', 'month', 'cash', 'stocks', 'gold',
     'emergency_fund', 'lifestyle_type', 'bike_status',
     'loans', 'pending_cash_next_month', 'bike_lock_in_months',
-    'net_worth', 'discipline_score', 'financial_health_score', 'status'
+    'net_worth', 'discipline_score', 'financial_health_score', 'status',
+    'trust_score', 'risk_level', 'spouse_archetype', 'spouse_satisfaction',
+    'household_expense_modifier', 'insurance_plan'
 }
 LOAN_UPDATE_REQUIRED = {'id', 'user_id', 'current_amount', 'status'}
 LOAN_INSERT_REQUIRED = {'user_id', 'principal', 'current_amount', 'interest_rate', 'month_taken', 'status'}
@@ -274,7 +276,10 @@ def validate_rpc_payload(updates_state, updates_loans, inserts_loans, inserts_lo
 # and applies ADDITIVE deltas so concurrent different actions compose correctly.
 # Economic formulas stay in the Python callers; this only serialises the apply.
 # ════════════════════════════════════════════════════════════════════════════
-_TXN_ERROR_KINDS = ('DUPLICATE_ACTION', 'INSUFFICIENT_CASH', 'PLAYER_NOT_FOUND')
+_TXN_ERROR_KINDS = ('DUPLICATE_ACTION', 'INSUFFICIENT_CASH', 'PLAYER_NOT_FOUND',
+                    'TURN_NOT_PLAYABLE', 'MARRIAGE_NOT_AVAILABLE',
+                    'ALLOCATION_REQUIRED', 'MARRIAGE_DECISION_REQUIRED',
+                    'NEGOTIATION_NOT_AVAILABLE', 'PENDING_NEGOTIATION_REQUIRED')
 
 
 class PlayerTxnError(Exception):

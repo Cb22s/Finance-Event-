@@ -108,135 +108,136 @@ def next_month():
 
     next_m = curr_m + 1
 
-    # End game after 12 months
-    if curr_m >= TOTAL_MONTHS:
-        supabase.table('game_control').update({
-            'game_status': 'ended'
-        }).eq('id', 1).execute()
-        return jsonify({
-            "message": f"Month {TOTAL_MONTHS} completed. Game officially ended!"
-        })
-
-    # A-02: freeze player mutations for the WHOLE read → compute → write cycle.
-    # require_playable() rejects every mutating player endpoint while game_status is
-    # 'processing', so no player action can land between get_all_players() below and
-    # the atomic write and be silently overwritten by the monthly result. Restored
-    # to 'active' in every exit path below (including errors) so the game is never
-    # left stuck in 'processing'.
-    supabase.table('game_control').update({'game_status': 'processing'}).eq('id', 1).execute()
+    try:
+        gate = supabase.rpc('begin_month_transition', {'p_expected_month': curr_m}).execute().data
+    except Exception as e:
+        return jsonify({'error': f'Cannot advance: {e}'}), 409
+    if not gate.get('ready'):
+        count = gate['unlocked_count']
+        return jsonify({'error': f'Cannot advance: {count} player(s) have not completed and locked their turn.',
+                        'unlocked_count': count,
+                        'unallocated_count': gate.get('unallocated_count', 0)}), 409
 
     def _restore_active():
-        supabase.table('game_control').update({'game_status': 'active'}).eq('id', 1).execute()
-
-    # Fetch all data
-    players = get_all_players()
-    if not players:
-        _restore_active()
-        return jsonify({"error": "No players found to process."}), 400
-
-    admin_events = get_admin_events_for_month(next_m)
-
-    # ── Resolve the month's market scenario ONCE, for everyone ──
-    # Admin-authored row wins; unauthored months fall back to the engine's
-    # correlated auto regime (or a flat month when auto_market is off).
-    scenario_row = get_market_scenario_row(next_m)
-    market_scenario = resolve_market_scenario(next_m, scenario_row, auto_market)
-
-    # Accumulate batch operations
-    updates_state = []
-    updates_loans = []
-    inserts_loans = []
-    inserts_logs = []
-    all_event_summaries = []
-
-    for player in players:
-        uid = player['user_id']
-
-        # Fetch player-specific data — engine handles everything else
-        active_loans = get_active_loans(uid)
-        pending_sales = get_pending_sales(uid, next_m)
-
-        # ── RUN THE ENGINE — route passes data, engine decides what to do ──
-        result = process_month_for_player(
-            player=player,
-            month=next_m,
-            admin_events=admin_events,
-            active_loans=active_loans,
-            pending_sales=pending_sales,
-            auto_events=auto_events,
-            auto_market=auto_market,
-            market_scenario=market_scenario
-        )
-
-        # Collect batch data
-        updates_state.append(result['updated_state'])
-
-        for lu in result['loan_updates']:
-            # Ensure all required fields for loan updates
-            matching_loan = next((l for l in active_loans if l['id'] == lu['id']), {})
-            updates_loans.append({
-                "id": lu['id'],
-                "user_id": uid,
-                "principal": float(matching_loan.get('principal', 0)),
-                "current_amount": lu['current_amount'],
-                "interest_rate": float(matching_loan.get('interest_rate', 0.12)),
-                "month_taken": int(matching_loan.get('month_taken', next_m)),
-                "status": lu['status']
-            })
-
-        inserts_loans.extend(result['new_loans'])
-
-        # Build log entry
-        summary = " | ".join(result['event_log'])
-        inserts_logs.append({
-            "user_id": uid,
-            "month": next_m,
-            "starting_cash": result['starting_cash'],
-            "ending_cash": result['ending_cash'],
-            "net_worth": result['net_worth'],
-            "summary": summary
-        })
-
-        # Collect event summaries for response
-        for ev in result.get('events_triggered', []):
-            all_event_summaries.append({
-                "player": uid[:8],
-                "event": ev['name'],
-                "category": ev.get('category', 'unknown'),
-                "value": ev['value']
-            })
-
-    # Validate the batch payload
-    err = validate_rpc_payload(updates_state, updates_loans, inserts_loans, inserts_logs)
-    if err:
-        _restore_active()
-        return jsonify({"error": f"Validation failed: {err}"}), 500
-
-    # Execute atomically via RPC
-    payload = {
-        "p_updates_player_state": updates_state,
-        "p_updates_loans": updates_loans,
-        "p_inserts_loans": inserts_loans,
-        "p_inserts_logs": inserts_logs,
-        "p_next_month": next_m
-    }
+        supabase.table('game_control').update({'game_status': 'active'}).eq('id', 1).eq('current_month', curr_m).eq('game_status', 'processing').execute()
 
     try:
-        supabase.rpc('process_month_atomically', payload).execute()
-    except Exception as e:
-        _restore_active()
-        return jsonify({"error": f"Database processing failed: {e}"}), 500
+        # Fetch all data
+        players = get_all_players()
+        if not players:
+            return jsonify({"error": "No players found to process."}), 400
 
-    # Processing done — reopen the game to players (RPC already advanced the month).
-    _restore_active()
-    return jsonify({
-        "message": f"Success! Advanced to Month {next_m}.",
-        "month": next_m,
-        "market": market_scenario,
-        "players_processed": len(players),
-        "events_triggered": len(all_event_summaries),
-        "event_details": all_event_summaries[:20]  # Limit for response size
-    })
+        if curr_m == TOTAL_MONTHS:
+            from engine.scoring import score_player_snapshot
+            scores = [{'user_id': p['user_id'], **score_player_snapshot(p)} for p in players]
+            supabase.rpc('finish_game_atomically', {'p_scores': scores}).execute()
+            return jsonify({'message': f'Month {TOTAL_MONTHS} completed. Game officially ended!'})
+
+        admin_events = get_admin_events_for_month(next_m)
+
+        # ── Resolve the month's market scenario ONCE, for everyone ──
+        # Admin-authored row wins; unauthored months fall back to the engine's
+        # correlated auto regime (or a flat month when auto_market is off).
+        scenario_row = get_market_scenario_row(next_m)
+        market_scenario = resolve_market_scenario(next_m, scenario_row, auto_market)
+
+        # Accumulate batch operations
+        updates_state = []
+        updates_loans = []
+        inserts_loans = []
+        inserts_logs = []
+        all_event_summaries = []
+
+        for player in players:
+            uid = player['user_id']
+
+            # Fetch player-specific data — engine handles everything else
+            active_loans = get_active_loans(uid)
+            pending_sales = get_pending_sales(uid, next_m)
+
+            # ── RUN THE ENGINE — route passes data, engine decides what to do ──
+            result = process_month_for_player(
+                player=player,
+                month=next_m,
+                admin_events=admin_events,
+                active_loans=active_loans,
+                pending_sales=pending_sales,
+                auto_events=auto_events,
+                auto_market=auto_market,
+                market_scenario=market_scenario
+            )
+
+            # Collect batch data
+            updates_state.append(result['updated_state'])
+
+            for lu in result['loan_updates']:
+                # Ensure all required fields for loan updates
+                matching_loan = next((l for l in active_loans if l['id'] == lu['id']), {})
+                updates_loans.append({
+                    "id": lu['id'],
+                    "user_id": uid,
+                    "principal": float(matching_loan.get('principal', 0)),
+                    "current_amount": lu['current_amount'],
+                    "interest_rate": float(matching_loan.get('interest_rate', 0.12)),
+                    "month_taken": int(matching_loan.get('month_taken', next_m)),
+                    "status": lu['status']
+                })
+
+            inserts_loans.extend(result['new_loans'])
+
+            # Build log entry
+            summary = " | ".join(result['event_log'])
+            inserts_logs.append({
+                "user_id": uid,
+                "month": next_m,
+                "starting_cash": result['starting_cash'],
+                "ending_cash": result['ending_cash'],
+                "net_worth": result['net_worth'],
+                "summary": summary
+            })
+
+            # Collect event summaries for response
+            for ev in result.get('events_triggered', []):
+                all_event_summaries.append({
+                    "player": uid[:8],
+                    "event": ev['name'],
+                    "category": ev.get('category', 'unknown'),
+                    "value": ev['value']
+                })
+
+        # Validate the batch payload
+        err = validate_rpc_payload(updates_state, updates_loans, inserts_loans, inserts_logs)
+        if err:
+            return jsonify({"error": f"Validation failed: {err}"}), 500
+
+        # Execute atomically via RPC
+        payload = {
+            "p_updates_player_state": updates_state,
+            "p_updates_loans": updates_loans,
+            "p_inserts_loans": inserts_loans,
+            "p_inserts_logs": inserts_logs,
+            "p_next_month": next_m
+        }
+
+        try:
+            supabase.rpc('process_month_atomically', payload).execute()
+        except Exception as e:
+            return jsonify({"error": f"Database processing failed: {e}"}), 500
+
+        # The RPC has already advanced and reopened the game.
+        return jsonify({
+            "message": f"Success! Advanced to Month {next_m}.",
+            "month": next_m,
+            "market": market_scenario,
+            "players_processed": len(players),
+            "events_triggered": len(all_event_summaries),
+            "event_details": all_event_summaries[:20]  # Limit for response size
+        })
+    except Exception as e:
+        return jsonify({'error': f'Month processing failed: {e}'}), 500
+    finally:
+        _restore_active()
+
 
 
 # ──────────────────────────────────────────────
@@ -294,6 +295,7 @@ def add_event():
         "month": month,
         "event_name": data.get('event_name', 'Admin Event'),
         "event_type": event_type,
+        "category": data.get('category') or 'admin',
         "impact_target": impact_target,
         "value": value,
         "description": data.get('description', '')

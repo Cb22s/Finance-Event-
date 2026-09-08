@@ -35,10 +35,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         document.getElementById('csTitle').innerText = data.title || "The First Job";
         document.getElementById('csDesc').innerText = data.description || "You have landed your first job...";
-        document.getElementById('csRent').innerText = `₹${data.rent || 20000}`;
-        document.getElementById('csFood').innerText = `₹${data.food || 10000}`;
-        document.getElementById('csTransport').innerText = `₹${data.transport || 5000}`;
-        document.getElementById('csFamily').innerText = `₹${data.family || 5000}`;
+        const living = data.lifestyles.city;
+        document.getElementById('csRent').innerText = `₹${living.rent.toLocaleString('en-IN')}`;
+        document.getElementById('csFood').innerText = `₹${living.food.toLocaleString('en-IN')}`;
+        document.getElementById('csTransport').innerText = `₹${living.transport.toLocaleString('en-IN')}`;
+        document.getElementById('csFamily').innerText = `₹${living.utilities.toLocaleString('en-IN')}`;
     } catch (err) {
         console.error('Error fetching case study:', err);
     }

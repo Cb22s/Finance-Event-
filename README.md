@@ -1,163 +1,124 @@
-# 💰 Money Master — Financial Simulation Game
+# Money Master
 
-A full-stack, backend-driven financial simulation where users allocate ₹1,00,000/month, invest across assets, face random life events, and compete on a live leaderboard over 12 months.
+Money Master is a live, admin-paced financial simulation for students. Players
+start with Rs1,00,000 and manage 12 months of income, expenses, investments, debt,
+insurance, emergencies, marriage and spouse negotiations. The winner is ranked by
+Financial Health Score, with net worth used only to break ties.
 
----
+## Current implementation
 
-## 🏗️ Architecture
+The static HTML/JavaScript frontend calls Flask routes. Python engines decide
+financial outcomes. Supabase stores state and runs atomic database transactions.
+Economic constants are authoritative in `backend/models/constants.py`.
 
-```
-financial event/
-├── backend/
-│   ├── app.py                    ← Flask entry point (imports from routes/)
-│   ├── supabase_client.py        ← Supabase connection
-│   ├── requirements.txt
-│   ├── .env                      ← SUPABASE_URL + SUPABASE_SERVICE_KEY
-│   ├── engine/
-│   │   ├── event_engine.py       ← Dynamic probabilistic event generation
-│   │   ├── market_engine.py      ← Stock/gold growth, inflation, risk scoring
-│   │   └── monthly_processor.py  ← Core game loop orchestrator
-│   ├── models/
-│   │   └── constants.py          ← All game parameters (single source of truth)
-│   ├── routes/
-│   │   ├── player_routes.py      ← Player API endpoints
-│   │   └── admin_routes.py       ← Admin API endpoints (uses engine)
-│   └── services/
-│       ├── auth_service.py       ← Supabase token validation
-│       └── game_service.py       ← DB helpers, leaderboard, rate limiting
-│
-├── frontend/
-│   ├── index.html                ← Login (email + password; signup disabled)
-│   ├── case-study.html           ← Scenario briefing
-│   ├── allocation.html           ← Month 1 budget allocation
-│   ├── dashboard.html            ← Main game dashboard
-│   ├── leaderboard.html          ← Live/final rankings
-│   ├── admin.html                ← Admin control panel
-│   ├── css/style.css             ← Premium design system
-│   └── js/
-│       ├── config.js             ← Supabase client + API_BASE_URL
-│       ├── auth.js               ← Email + password login (Supabase Auth)
-│       ├── case-study.js
-│       ├── allocation.js
-│       ├── dashboard.js          ← Main game logic (calls /sell, /buy-choice, /handle-relative)
-│       └── admin.js
-│
-└── supabase.sql                  ← COMPLETE fresh install (one file: all tables,
-                                     RLS, RPCs, signup trigger, admin + idempotency)
-   (other *.sql files are retrofit-only patches / supabase_migration.sql is SUPERSEDED)
-```
+Month 1 creates the initial allocation and locks the turn. For months 2-12,
+players review the processed month, make decisions, allocate available cash
+(including choosing to retain cash), and lock their turn. The administrator
+cannot advance until every player is ready. Registered non-admin users who have
+not completed their initial allocation are counted as unready.
 
----
+Marriage is available in Month 4 when the administrator opens the round.
+Players reveal candidates and select a spouse or stay single. Wedding cost is
+Rs25,000. Three reveals are free; additional distinct reveals cost Rs5,000.
+Spouse income, assets, expenses, satisfaction and negotiated household changes
+remain on the player's existing state. Month 6 uses the family festival proposal.
+Later conversations use authored proposals or built-in defaults. AI interprets
+and narrates; the deterministic evaluator decides all financial effects.
 
-## 🎮 Game Flow
+Optional choices and relative-help APIs remain implemented. Optional choices
+stay hidden in the player interface, following the organizer's recorded
+2026-07-24 decision. This repair does not reactivate them.
 
-```
-Login → Case Study → Month 1 Allocation → Dashboard ← → Admin: Next Month → ... → Leaderboard
-```
+## Monthly processing
 
-### Month Sequence (Backend Engine):
-1. **Income**: +₹1,00,000 salary added
-2. **Expenses**: Lifestyle costs deducted (with inflation from month 4)
-3. **Sales Credits**: Pending asset sales credited
-4. **Investment Growth**: Stocks ±volatility, Gold stable ±, Emergency Fund +2%
-5. **Dynamic Events**: Context-aware probabilistic events (emergency, opportunity, social, market)
-6. **Bike EMI**: -₹5,000 if applicable
-7. **Loan EMIs + Interest**: Repayments calculated
-8. **Safety Net**: Emergency fund covers deficit, else auto-loan
-9. **Final State**: Net worth, risk score, trust score calculated
+1. Credit pending asset sales.
+2. Add salary and applicable spouse income.
+3. Deduct inflation-adjusted living costs, bike savings and household modifiers.
+4. Deduct the selected insurance premium.
+5. Apply the common market scenario and emergency-fund interest.
+6. Apply events and eligible insurance reimbursements.
+7. Deduct bike EMI and amortized loan repayments.
+8. Cover deficits from the emergency fund, then an automatic loan if needed.
+9. Persist all state, loan changes and logs; calculate Financial Health Score.
 
----
+Base living expenses are Rs88,000 for City and Rs82,000 for Outer.
+Inflation starts in Month 4. Emergency funds earn 0.5% monthly. Voluntary loans
+use 1.2% monthly interest; automatic loans use 2.5%. Authored market scenarios
+override automatic markets. Auto events and auto markets default to off.
 
-## 🔌 API Endpoints
+At the end of Month 12, everyone locks before the final advancement command.
+The backend refreshes scores from the final portfolios and ends the game
+atomically. The separate manual End Game control remains available.
 
-### Player Routes
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/game-status` | Current game state |
-| GET | `/case-study` | Scenario briefing data |
-| POST | `/allocate` | Month 1 budget submission (backend-validated) |
-| GET | `/dashboard` | Full player state + choices + event logs |
-| POST | `/lock-turn` | Player confirms end of actions |
-| POST | `/sell` | Sell stocks/gold/emergency_fund (10% penalty) |
-| POST | `/buy-choice` | Purchase optional admin-created choice |
-| POST | `/handle-relative` | Donate to relative (trust system) |
-| GET | `/leaderboard` | Rankings by Financial Health Score (net-worth tiebreak) |
-| GET | `/event-history` | Full event log for player |
+## Database installation and upgrade
 
-### Admin Routes
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/start-game` | Reset all data, start fresh |
-| POST | `/next-month` | Process month for ALL players via engine |
-| POST | `/end-game` | Manually end the game |
-| POST | `/event` | Add global event for a specific month |
-| DELETE | `/event/<id>` | Remove a global event |
-| POST | `/choice-admin` | Add optional choice for players |
+`supabase.sql` is the authoritative schema path for this version. Run it as the
+database owner in the Supabase SQL Editor, outside an active game. It creates
+missing runtime objects and replaces the current transaction functions in one
+transaction. Re-running it preserves existing player and authored-content rows.
+It is tested on an empty database and on repeat installation.
 
----
+Use a backup and a staging copy before applying to a live installation with
+custom changes. This work has not inspected or upgraded the live database.
 
-## 🎲 Event Engine
+Do not replay historical migration files after the canonical file. Their older
+function definitions can undo current repairs. They remain as historical records,
+not an alternative installation sequence.
 
-Events are **never fixed or predictable**. Each player gets unique events based on:
-- **Emergency Fund level** → low EF = higher emergency probability
-- **Stock ratio** → aggressive investors face more market volatility
-- **Loan burden** → increases emergency probability
-- **Trust score** → high trust unlocks windfalls; low trust triggers penalties
-- **Month number** → late-game events differ from early game
-- **Cash level** → liquid cash attracts investment opportunities
+After installation, create an admin account and add its auth user UUID to
+`public.admins`. The signup trigger maintains `public.users`. Financial writes
+and transaction RPCs remain restricted to the backend service role.
 
-Event categories:
-- 🚨 **Financial Emergency** (phone repair, hospital, theft...)
-- 📈 **Investment Opportunity** (stock tip, freelance gig, bonus...)
-- 📊 **Market Fluctuation** (±stock %, ±gold %)
-- 🤝 **Social Responsibility** (charity, wedding, festival...)
-- 💸 **Expense Spike** (rent hike, fuel, grocery inflation...)
-- 🎁 **Windfall** (tax refund, lucky draw, inheritance...)
-- ⚠️ **Trust Penalty** (mid-late game if trust < 2)
+Schema installation does not author the competition. The optional
+`backend/tools/seed_content.py` contains the existing months 2-12 content pack;
+running that script replaces existing event and choice rows. Review its contents
+before using it on a staging game. Market scenarios remain admin-authored.
 
----
+## Running locally
 
-## 🗄️ Database Setup
+Set `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` in `backend/.env` for the intended
+development database. Set the Supabase URL and public anon key in
+`frontend/js/config.js` to that same project, then run:
 
-### Fresh Install — one file
-Run **`supabase.sql`** in the Supabase SQL Editor. That is the complete install:
-all tables (including `admins` and `player_month_actions`), RLS policies, the
-`process_month_atomically` and `sell_asset_atomic` RPCs (locked to
-`service_role`), and the signup trigger. The only post-install step is granting a
-specific admin (see `DEPLOY_FRESH.md` §4a). Full walkthrough: `DEPLOY_FRESH.md`.
-
-> ⚠️ Do **not** run any other `*.sql` file for a fresh install — they are all
-> already folded into `supabase.sql` (each carries a header saying so) and are
-> kept only to retrofit an older live project. In particular
-> `supabase_migration.sql` is **superseded — do not run it** (it re-opens a
-> public read policy on `player_state` and reverts the scoring RPC). See
-> `QA_REPORT_V1.md` F-02/F-04.
-
----
-
-## 🚀 Running Locally
-
-```bash
-cd backend
-pip install -r requirements.txt
-python app.py         # Starts on http://localhost:5000
+```powershell
+python -m pip install -r backend/requirements.txt
+python backend/app.py
 ```
 
-For the frontend, open `frontend/index.html` directly in a browser, OR use a local HTTP server:
-```bash
-cd frontend
-python -m http.server 8080
-# Visit http://localhost:8080
+Serve the frontend from another terminal:
+
+```powershell
+python -m http.server 8080 --directory frontend
 ```
 
-**Important**: Set `API_BASE_URL` in `frontend/js/config.js`:
-- Local: `"http://localhost:5000"`
-- Production: `"https://financial-pecc.onrender.com"`
+Open http://localhost:8080. The frontend automatically uses localhost:5000 when
+served on localhost; deployed pages use the backend URL in `frontend/js/config.js`.
 
----
+## Verification
 
-## 🌐 Deployment (Render)
+Run the unit suite from the repository root:
 
-- **Build Command**: `pip install -r requirements.txt`
-- **Start Command**: `gunicorn app:app`
-- **Environment Variables**: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
+```powershell
+python -m unittest discover -s backend/tests -v
+```
+
+For the isolated SQL and API tests, install the test database runtime first:
+
+```powershell
+npm install --prefix .test-runtime --no-audit --no-fund @electric-sql/pglite@0.3.14
+```
+
+The API tests use the real Flask routes and canonical SQL with test-only
+authentication and offline AI. They never connect to the configured Supabase.
+PGlite runs PostgreSQL in WebAssembly; it is not a substitute for native
+multi-client concurrency or deployed Supabase/Auth/PostgREST verification.
+Native concurrency tests require `pgserver` and `psycopg` on a supported host.
+
+Run the six-strategy comparison with:
+
+```powershell
+python backend/tools/strategy_simulation.py --output .test-runtime/strategies.json
+```
+
+See `IMPLEMENTATION_PLAN.md` for the dependency map and
+`IMPLEMENTATION_REPORT.md` for results, changed files and remaining checks.

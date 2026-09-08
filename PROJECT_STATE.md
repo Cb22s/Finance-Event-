@@ -1,113 +1,73 @@
-# Money Master — Project State (handoff)
+# Money Master - Current Project State
 
-**Written:** 2026-07-20. Read this first. It replaces guessing across the 20+ RC/QA docs.
+Updated 2026-09-08 after controlled implementation.
+This replaces the obsolete July handoff; old RC/audit documents remain historical.
 
----
+## Scope and repository
 
-## 1. Where things actually stand
+The work began on a clean main branch. Changes are uncommitted and are limited
+to implementation consistency, verification and current documentation.
+No live database, Render deployment or Netlify deployment was changed or inspected.
 
-| Layer | State |
-|---|---|
-| Code (local folder) | V1 + this session's changes. Compiles, tests **30/30 PASS**. |
-| Supabase (live) | Schema live. `game_control.auto_events` / `auto_market` migration **APPLIED**. |
-| Render (backend) | **RUNNING OLD CODE.** None of this session's backend changes are deployed. |
-| Netlify (frontend) | **RUNNING OLD CODE.** Toggle UI not visible yet. |
-| Git | This session's work is **UNCOMMITTED**. Index has a stuck lock + duplicate entries. |
+The existing concept is preserved: 12 admin-paced months, recurring allocation,
+insurance, loans, Month 4 marriage, Month 6 festival, spouse negotiations and
+Financial Health Score. No score weights or spouse archetype economics changed.
 
-**The single most important fact:** the live game still behaves the old way because the
-backend was never redeployed. Editing files does nothing until Render rebuilds.
+## Database
 
----
+Use supabase.sql as the canonical installation/upgrade path. It now includes all
+runtime tables, household/insurance/loan fields, event categories and transaction
+functions. The file is repeatable and transactional. Existing rows are retained.
+Historical migrations must not be applied after it.
 
-## 2. Changes made this session (all uncommitted)
+Fresh installation, repeat installation, rollback behavior, runtime table/RPC
+coverage and monthly state persistence have local PostgreSQL test coverage.
+The dependency map is in IMPLEMENTATION_PLAN.md.
 
-1. **Create Player** — `POST /admin/create-player` + admin form. Admin provisions logins
-   (username + password) via the Supabase service_role admin API. Supabase Auth and all
-   RLS left intact — auth was NOT replaced.
-2. **Username login** — players log in with a plain username; internally mapped to
-   `<username>@event.local`. `index.html` + `auth.js`.
-3. **Player Roster** — `GET /admin/roster` + admin card. Shows every provisioned login as
-   "Playing" (has a `player_state` row) or "Waiting" (created, not yet allocated).
-4. **Manual control toggles** — `game_control.auto_events` and `auto_market`, both
-   default **false**. Gated in `event_engine` / `market_engine` / `monthly_processor`;
-   `POST /admin/settings` + Game Controls card. Function defaults stay `True` so the
-   existing test suite is unaffected.
-   - Verified: both off + no authored events => 0 events fire, stocks do not move.
-     Admin "Stock Crash -30%" => only that fires (50,000 -> 35,000).
-5. **Marriage EV-balance simulator** — `backend/tools/marriage_ev_sim.py`. Balance tool
-   only; touches no production code.
+## Repairs
 
----
+- Database-backed readiness gate counts unlocked and not-yet-allocated players.
+  A shared game lock serializes player transactions against month freezing.
+- Initial allocation writes state, action claim and log in one transaction.
+- Month processing persists all fields returned by the engine, including spouse,
+  satisfaction, household modifiers, insurance and new-loan terms.
+- Negotiation confirmation and financial effects commit together; confirmation
+  must match the saved intent parameters.
+- Reveal charging and the reveal record are atomic. Insurance uses the existing
+  atomic player transaction.
+- Staying single is valid under the spouse foreign key.
+- Month 12 finalization recalculates final scores and then ends the game atomically.
+- Wedding and revealed traits render backend data. Expense displays use current
+  backend values; the lifestyle-selector callback scope is repaired.
+- Event entry preserves its category, with category selection in the admin form.
+- Zero spouse satisfaction is retained instead of resetting to the default.
 
-## 3. Recovery note (environment)
+Optional choices intentionally remain hidden. Backend functionality is preserved.
 
-The Cowork mount corrupted files 3x this session (truncation + null bytes):
-`monthly_processor.py`, `utils.py`, `admin_routes.py`. All were restored from git HEAD.
-Deletes were blocked ("Operation not permitted"), which is why `.git/index.lock` is stuck.
-**This problem does not exist in a local IDE.** In a real terminal, run:
+## Verification and limits
 
-```
-del .git\index.lock        (Windows)
-git reset                  # clears the duplicate D/?? index entries
-git add -A
-git commit -m "create-player, roster, manual control toggles, marriage EV simulator"
-```
+The isolated lifecycle exercises the actual Flask routes and canonical SQL through
+12 months, including marriage, insurance, a voluntary loan, sale credits, the
+festival and a later spouse conversation. Authentication is a local test fixture;
+AI uses its supported offline path. This is not a deployed Supabase/browser test.
 
----
+PGlite supplies a local PostgreSQL engine. Native simultaneous-client tests require
+pgserver/psycopg and remain skipped on this machine. They now reference the
+canonical schema rather than the historical atomic migration.
 
-## 4. Blockers before the event (unchanged since RC1)
+The six-strategy simulation compares a baseline and the existing event pack.
+Healthy liquidity wins over greater risky wealth in the baseline. The event-pack
+stress path drives all six fixed, uninsured, single strategies into debt. This is
+a content/balance review signal, not proof that no adaptive strategy can succeed.
+Weights and event content were left unchanged.
 
-1. **Months 2-12 content pack unwritten.** Now load-bearing: with auto_events and
-   auto_market OFF, an unauthored month = salary minus expenses and nothing else,
-   and investing does nothing because prices never move.
-2. **Deploy this session's code** to Render + Netlify, then hard-refresh.
-3. **Full 12-month dry run** — never performed. Do it from a fresh clone.
-4. **Headcount** — gates QA-012 (perf safe to ~50-100 players).
+## Next acceptance checks
 
----
+1. Apply the canonical schema to an isolated Supabase staging project and verify
+   real account login, RLS, PostgREST RPC discovery and the deployed UI.
+2. Run native PostgreSQL concurrency checks and a multi-player rehearsal.
+3. Review authored content using insurance, spouse choices and adaptive strategies
+   before selecting the actual pilot schedule.
+4. Deploy only after those checks; live version and data are currently unverified.
 
-## 5. Marriage (ADR-002) — status
-
-**Decision (2026-07-20):** build the *real* system, marriage offered mid-game.
-Architecture re-ratified: **direct spouse on `player_state`**, NOT the ADR-001 household
-refactor. Rationale: one NPC spouse, with divorce/children/in-laws deferred, does not
-justify refactoring 7 financial tables + re-deriving ADR-008 scoring. Migrate to
-households later if children/divorce arrive.
-
-**Fairness gate: CLEARED (provisionally).** `marriage_ev_sim.py` proves the 4 archetypes
-and "stay single" sit in one tolerance band under both market regimes:
-
-- Market ON : spread 2.0%, single +0.9% vs archetype mean, no dominance — PASS
-- Market OFF: spread 2.2%, single +1.7% vs archetype mean, no dominance — PASS
-
-Ranking *flips* between regimes (Investor best when markets grow, Anchor when flat), so
-spouse choice is a genuine read on the economy the admin authors.
-
-Balanced stat blocks (marriage month 6, wedding cost Rs88,000, spouse +Rs9,000/mo):
-
-| Archetype | income | expense_mod | stocks | gold | ef |
-|---|---|---|---|---|---|
-| The Saver | 10,000 | -9,000 | 0 | 8,000 | 22,000 |
-| The Earner | 36,000 | +12,000 | 0 | 0 | 0 |
-| The Investor | 9,000 | -1,000 | 44,000 | 20,000 | 24,000 |
-| The Anchor | 14,000 | -2,000 | 8,000 | 0 | 45,000 |
-
-**Caveats:** first-order model (no random events, volatility, loans, trust, sell
-penalties). Balance is provisional while auto_market is OFF — **re-run the simulator once
-the months 2-12 content pack exists**, since archetype value depends on the market you author.
-
-**Not yet built:** `spouse_archetypes` table, spouse fields on `player_state`,
-`player_spouse_reveals` (deterministic trait reveal), spouse income/expense in
-`monthly_processor`, admin "open marriage round" control, player spouse-choice UI.
-
----
-
-## 6. Do these in order
-
-1. Commit + push (section 3).
-2. Redeploy Render backend, then Netlify frontend; hard-refresh.
-3. Start a game; confirm Next Month fires 0 events and stocks hold => manual control live.
-4. Author the months 2-12 content pack (events + market moves).
-5. Re-run `python3 backend/tools/marriage_ev_sim.py` against that content.
-6. Then build marriage (section 5).
-7. Full 12-month dry run from a fresh clone.
+Detailed results, per-file changes and the verdict are in IMPLEMENTATION_REPORT.md.

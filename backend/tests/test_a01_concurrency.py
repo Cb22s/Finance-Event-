@@ -2,7 +2,7 @@
 # A-01 CONCURRENCY PROOF — player_apply_atomic serialises cross-action cash writes
 # =============================================================================
 # This spins up a REAL local Postgres (via the `pgserver` pip package), loads the
-# ACTUAL a01_atomic_player_txn_migration.sql, and hammers one player row with many
+# ACTUAL canonical supabase.sql, and hammers one player row with many
 # concurrent threads doing loan(+A) and allocate(-B). If the row lock did not
 # serialise, lost updates would make the final balances wrong. It also proves the
 # in-transaction idempotency claim: N threads with the SAME action_key => exactly
@@ -29,27 +29,15 @@ except Exception:
     _HAVE_PG = False
 
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..",
-                         "a01_atomic_player_txn_migration.sql")
+                         "supabase.sql")
 
 _SCHEMA = """
-CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
-CREATE TABLE player_state (
-  user_id uuid PRIMARY KEY, month int default 1,
-  cash numeric default 0, stocks numeric default 0, gold numeric default 0,
-  emergency_fund numeric default 0, loans numeric default 0, net_worth numeric default 0,
-  trust_score numeric default 0, spouse_satisfaction int default 60,
-  household_expense_modifier numeric default 0, risk_level int default 50,
-  financial_health_score numeric default 0, status text default 'active',
-  spouse_archetype text, insurance_plan text default 'none'
-);
-CREATE TABLE player_loans (
-  id serial PRIMARY KEY, user_id uuid, principal numeric, current_amount numeric,
-  interest_rate numeric, month_taken int, term_months int, loan_type text, emi numeric, status text
-);
-CREATE TABLE player_month_actions (
-  user_id uuid, month int, action_key text, PRIMARY KEY (user_id, month, action_key)
-);
+CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
+CREATE SCHEMA auth;
+CREATE TABLE auth.users(id uuid PRIMARY KEY, email text, raw_user_meta_data jsonb);
+CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS 'SELECT NULL::uuid';
 """
+
 _UID = '11111111-1111-1111-1111-111111111111'
 
 
@@ -75,6 +63,8 @@ class TestA01Concurrency(unittest.TestCase):
     def _reset(self, cash):
         with psycopg.connect(self.uri, autocommit=True) as c:
             c.execute("DELETE FROM player_month_actions; DELETE FROM player_loans; DELETE FROM player_state;")
+            c.execute("INSERT INTO auth.users(id,email) VALUES (%s, %s) ON CONFLICT DO NOTHING", (_UID, "test@local"))
+            c.execute("UPDATE game_control SET current_month=1, game_status='active' WHERE id=1")
             c.execute("INSERT INTO player_state(user_id,cash,net_worth) VALUES (%s,%s,%s)", (_UID, cash, cash))
 
     def _call(self, deltas=None, action_key=None, require_cash=None):

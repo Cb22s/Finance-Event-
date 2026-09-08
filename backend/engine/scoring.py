@@ -37,6 +37,30 @@ def spouse_score_inputs(spouse_arch_id) -> tuple:
     return 0.0, 0.0, 0.0
 
 
+def score_player_snapshot(player: dict) -> dict:
+    """Refresh final standings after the last round's player actions."""
+    from engine.market_engine import calculate_risk_score, calculate_inflation_adjustment
+    from models.constants import LIFESTYLE_COSTS
+    amounts = {key: float(player.get(key) or 0)
+               for key in ('cash', 'stocks', 'gold', 'emergency_fund', 'loans')}
+    assets = sum(amounts[key] for key in ('cash', 'stocks', 'gold', 'emergency_fund'))
+    worth = assets - amounts['loans']
+    risk = calculate_risk_score(amounts)
+    month = int(player['month'])
+    living = LIFESTYLE_COSTS.get(player.get('lifestyle_type'), LIFESTYLE_COSTS['city'])
+    expense = calculate_inflation_adjustment(living['total'], month)
+    if player.get('bike_status'):
+        expense -= living['transport'] * 0.5
+    income, injected, wedding = spouse_score_inputs(player.get('spouse_archetype'))
+    result = calculate_financial_health_score(
+        net_worth=worth, month=month, emergency_fund=amounts['emergency_fund'],
+        monthly_expense=expense, loans=amounts['loans'], total_assets=assets,
+        risk_score=risk, discipline_avg=float(player.get('discipline_score', 100)),
+        spouse_income=income, spouse_assets=injected, wedding_cost=wedding)
+    return {'net_worth': round(worth, 2), 'risk_level': risk,
+            'financial_health_score': result['score']}
+
+
 def net_worth_component(net_worth: float, month: int, spouse_income: float = 0.0,
                         spouse_assets: float = 0.0, wedding_cost: float = 0.0) -> float:
     """

@@ -253,6 +253,7 @@ document.addEventListener('DOMContentLoaded', () => {
             month: parseInt(document.getElementById('evMonth').value),
             event_name: document.getElementById('evName').value,
             event_type: document.getElementById('evType').value,
+            category: document.getElementById('evCategory').value,
             impact_target: document.getElementById('evImpact').value,
             value: parseFloat(document.getElementById('evValue').value),
             description: document.getElementById('evDesc').value

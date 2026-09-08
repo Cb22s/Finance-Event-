@@ -8,9 +8,11 @@
 # nobody can reintroduce a stale seed.
 
 import os
+import sys
 import re
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from models.constants import ARCHETYPES
 
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "marriage_migration.sql")

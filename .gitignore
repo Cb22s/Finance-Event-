@@ -14,6 +14,7 @@ build/
 venv/
 env/
 .venv/
+.test-runtime/
 .env/
 
 # 🔴 NEVER commit this — contains Supabase keys

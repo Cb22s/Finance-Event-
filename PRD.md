@@ -1,80 +1,108 @@
-# Money Master — Product Requirements Document
+# Money Master - Product Requirements Document
 
-**Version 1.0** · 2026-07-12 · Owner: A. Patchaiyappan
-Architecture decisions are **not** restated here — see `ARCHITECTURE_DECISIONS.md` (ADR-000…013). This document covers only what lives nowhere else: game content, product rationale, and event operations.
+Current implementation: 2026-09-08. Owner: A. Patchaiyappan.
+This document reflects executable behavior; historical design documents may
+describe older costs, marriage timing or future household architecture.
 
----
+## Purpose and audience
 
-## 1. Product Vision
+Money Master is a financial life simulation for college students at a live
+competition. The administrator controls the pace while students learn through
+the financial consequences of their decisions.
 
-Money Master is a financial life-simulation event platform. College students live 12 simulated months of salary, expenses, investments, emergencies, and social obligations, competing on a ranked leaderboard. The product teaches financial decision-making through consequences, not quizzes. Guiding priorities and conflict-resolution rules: **see ADR-000.**
+## Game structure
 
-## 2. Audience & Context
+There are 12 months. Month 1 starts with Rs1,00,000 and the initial allocation.
+The initial living-cost buckets remain cash reserves; the engine charges
+recurring living expenses from Month 2 onward. A bike down payment is consumed.
 
-Primary: college students at a live, admin-paced competition event. Players need no finance background; the game is the curriculum. Secondary: the event organizer (admin), who controls pacing from a dashboard while an emcee narrates rounds.
+From Months 2-12, the engine adds Rs1,00,000 salary and processes the month.
+Players then make decisions and submit their monthly allocation, which may retain
+cash. Players with more than Rs0.50 cash must record allocation before locking.
 
-## 3. Game Structure (V1)
+Month advancement is synchronized. All player states must be in the current month
+and locked; all provisioned non-admin users must have completed initial allocation.
+The administrator receives the number of unready players instead of a partial
+advancement. Manual start, settings, corrections, reset and end controls remain.
 
-- **Duration:** 12 months. Month 1 is allocation; months 2–12 are processed rounds.
-- **Starting budget:** ₹1,00,000, allocated exactly (validation enforces the total) across cash, stocks, gold, emergency fund, and optional bike down payment.
-- **Salary:** ₹1,00,000 per month, every month, for every player (equal footing by design).
-- **Rounds:** the admin advances months one at a time. Players cannot see future events. Round release and locking: **see ADR-011.**
+## Financial decisions
 
-## 4. Player Decisions
+- Lifestyle: City base costs Rs88,000/month; Outer Rs82,000/month.
+- Investments: stocks and gold follow a common market scenario; emergency funds
+  earn 0.5% monthly. Authored markets take precedence over automatic generation.
+- Bike: Rs10,000 down payment, Rs5,000 EMI, three-month lock-in and 50% transport
+  savings under the existing rules.
+- Asset sales: 10% penalty; proceeds arrive next month.
+- Voluntary loans: minimum Rs10,000; 3, 6 or 12-month terms; 1.2% monthly interest.
+  Existing debt and EMI limits apply. Forced deficit loans use 2.5% monthly interest.
+- Insurance: no cover, Basic (Rs2,500/month, 50% eligible coverage), or Comprehensive
+  (Rs6,000/month, 80%). Premiums begin at subsequent monthly processing.
+  Medical and emergency cash losses are eligible; market losses are not.
+- Optional choices: backend and admin support remains, but the player UI keeps
+  them hidden by the organizer's explicit decision. Relative-help routes also remain.
 
-- **Initial allocation** — the foundational strategy decision. Includes lifestyle choice: City (₹40,000/mo total) vs. Outer (₹25,000/mo total), trading cost against nothing else in V1 (a deliberate simplification).
-- **Bike purchase** — ₹10,000 down, ₹5,000 EMI, 3-month lock-in, halves transport cost. Teaches EMI trade-offs at small scale.
-- **Optional choices** — admin-published per-month opportunities with probabilistic outcomes (deterministic per-player roll for fairness).
-- **Asset sales** — players may liquidate stocks/gold at a 10% penalty, credited the following month. Teaches liquidity cost and panic-selling consequences.
-- **Relative help decisions** — periodic requests to help family (none/medium ₹2,000/high ₹5,000) building a trust score with delayed payoffs. Teaches social capital as a financial asset.
+Inflation is 0.5% monthly from Month 4. The dashboard distinguishes base living
+costs from current household costs, including inflation, bike savings, spouse
+expenses and relationship/negotiated modifiers. Insurance premiums and loan EMIs
+are separate obligations.
 
-## 5. Economy Parameters (V1 tuning)
+## Marriage and spouse
 
-Single source of truth: `backend/models/constants.py`. Headline values: stocks 8%/mo base growth with −15%…+20% volatility; gold 4%/mo with minor fluctuation; emergency fund 2%/mo interest; inflation 0.5%/mo on expenses from month 4; loans at 12%/mo interest with EMI = 10% of principal; auto-loan on cash crisis. Market movements follow one **global path** — every player faces identical returns in the same month: **see ADR-009.**
+In Month 4, the administrator may open marriage. Candidates are Saver, Earner,
+Investor and Anchor. A player may reveal income, expenses and assets. Three
+distinct reveals are free; later reveals cost Rs5,000 each. Repeating an existing
+reveal is free. Choosing a spouse or staying single is final for this game.
 
-**Design intent:** rates are compressed (monthly ≈ annual real-world) so 12 months produce a visible lifetime arc. They are pedagogically honest in *relative* terms — stocks > gold > savings in return and risk — not numerically realistic.
+A wedding costs Rs25,000. The spouse's assets/liabilities and current-month net
+income/expense flow apply once at marriage; subsequent monthly processing applies
+recurring income and expenses. These values remain on player_state. There is no
+new household ownership model in this implementation.
 
-## 6. Life Events
+If the round is open, players must choose spouse or single before locking Month 4.
+The database rechecks timing, round availability and prior selection atomically.
 
-Seven categories with state-driven probabilities (base rates in constants):
+When the administrator enables conversations, the spouse makes a proposal.
+The player sends a message, sees the interpreted intent and parameters, and
+confirms it. The deterministic evaluator controls the amount, satisfaction and
+household effects. The confirmed result and financial changes commit together.
 
-| Category | Base | Design purpose |
-|---|---|---|
-| Financial emergency | 25% (+20% if EF < ₹5k, +10% if in debt) | Punishes being unprepared, not being unlucky |
-| Investment opportunity | 30% (+ if cash-rich) | Rewards liquidity |
-| Market fluctuation | 40%, global | Shared macro reality (ADR-009) |
-| Social responsibility | 20% | Feeds trust score |
-| Expense spike | 20% | Cost-of-living noise |
-| Windfall | 10% (+ with high trust, late-game) | Delayed karma payoff |
-| Trust penalty | conditional (month ≥ 6, trust < 2) | Consequence of ignoring social events |
+Month 6 is the family festival, a one-time consumption decision. Other months use
+authored or built-in proposals, including saving, protection, investment and
+lifestyle requests. The existing character model affects negotiations. AI remains
+an interpretation/narration layer and has an offline fallback.
 
-Personal event probabilities depend on the player's own state — consequences of choices, not lottery. Admins can inject additional global events any month. Event architecture: **see ADR-004, ADR-006, ADR-011.**
+## Events and content
 
-## 7. Winning: Financial Health Score
+Auto events and auto markets default to off. Admin-authored events and markets
+remain effective in manual mode. Automatic personal events, when enabled, depend
+on player state and deterministic seeds. All players share the monthly market path.
 
-Ranking uses a composite score, not net worth: 40% net worth (normalized to resources received, capped), 15% liquidity (months of expenses in emergency fund, target 6), 15% debt control, 15% risk protection, 15% discipline (running average; cash crises graded down). Formula is **public to players** — the scoreboard is itself teaching material. Full decision and anti-gaming rationale: **see ADR-008.**
+The repository contains a months 2-12 event/optional-choice seed pack. Its presence
+does not imply it is installed in any live database. Event categories are preserved
+from admin entry or seeding through processing and insurance classification.
 
-**Why not net worth?** Net-worth-only ranking crowns the luckiest gambler and teaches exactly the wrong lesson. The composite makes the boring virtues — liquidity, low debt, insurance-mindedness, consistency — visibly count.
+## Winning and completion
 
-## 8. Roles
+Financial Health Score weights remain:
 
-**Player:** allocate, decide monthly, watch consequences, climb leaderboard.
-**Admin:** start/restart game, advance months, publish events and optional choices, manually correct player records (audit-logged), reset individual players, end game. Admin actions are the event's pacing mechanism.
+| Component | Weight |
+| --- | ---: |
+| Normalized net worth | 40% |
+| Emergency-fund liquidity | 15% |
+| Debt control | 15% |
+| Risk protection | 15% |
+| Discipline | 15% |
 
-## 9. Event-Day Operations
+Leaderboard order is Financial Health Score descending, then net worth descending.
+Monthly processing calculates the score. Final completion, after Month 12 turns
+are locked, refreshes it from the final portfolios before ending the game.
 
-1. Players register/login (Supabase Auth) and read the case study screen.
-2. Allocation window opens; emcee explains the economy; players lock month 1.
-3. Each round: emcee narrates the month's theme → admin advances month → players review results and make decisions → repeat.
-4. Leaderboard displayed publicly between rounds (score in points, net worth visible).
-5. After month 12: game ends, final standings shown, top 3 on podium display.
+## Operational status
 
-**Operational rules:** never deploy code or run migrations mid-game (ADR-012/013); admin corrections are audit-logged to `player_month_log`.
+The canonical schema and isolated API/database 12-month lifecycle have been
+verified locally. Live authentication, PostgREST integration, native concurrent
+clients and a deployed browser rehearsal remain separate acceptance checks.
+See IMPLEMENTATION_REPORT.md for current evidence and readiness.
 
-## 10. Future Versions (references only)
-
-Household foundation: **ADR-001** (approved V1 architecture, design pending). Marriage & life partner: **ADR-002** (approved, future). Conversational AI pipeline: **ADR-003**. Financial ownership model: **ADR-005**. AI memory: **ADR-010**. New feature proposals follow the evaluation framework and classify per **ADR-013**.
-
-## 11. Change Management
-
-Every change is classified before work begins: **see ADR-013.** This PRD updates when Level 5 features land or game content/tuning materially changes; it never restates architecture.
+No divorce, children, separate household accounts or other future mechanics are
+introduced by this implementation.

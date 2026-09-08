@@ -42,6 +42,24 @@ from engine.scoring import (
 )
 
 
+def household_expenses(player: dict, month: int) -> dict:
+    """Current recurring living costs, shared with the dashboard."""
+    living = LIFESTYLE_COSTS.get(player.get('lifestyle_type'), LIFESTYLE_COSTS['city'])
+    base = living['total']
+    inflated = calculate_inflation_adjustment(base, month)
+    bike_saving = living['transport'] * 0.5 if player.get('bike_status') else 0
+    arc = ARCHETYPES.get(player.get('spouse_archetype'))
+    spouse = SPOUSE_BASE_EXPENSE + arc['expense_mod'] if arc else 0
+    satisfaction = player.get('spouse_satisfaction', SATISFACTION_START)
+    satisfaction = SATISFACTION_START if satisfaction is None else float(satisfaction)
+    drift = satisfaction_expense_drift(satisfaction) if arc else 0
+    modifier = float(player.get('household_expense_modifier') or 0)
+    return {'base': base, 'inflation': inflated - base, 'bike_saving': bike_saving,
+            'adjusted_living': inflated - bike_saving, 'spouse': spouse,
+            'relationship': drift, 'household_modifier': modifier,
+            'current': inflated - bike_saving + spouse + drift + modifier}
+
+
 def process_month_for_player(player: dict, month: int,
                               admin_events: list = None,
                               active_loans: list = None,
@@ -115,14 +133,13 @@ def process_month_for_player(player: dict, month: int,
     # ════════════════════════════════════════════
     # STEP 2: DEDUCT LIFESTYLE EXPENSES (with inflation)
     # ════════════════════════════════════════════
-    base_expense = LIFESTYLE_COSTS.get(lifestyle, LIFESTYLE_COSTS['city'])['total']
-    adjusted_expense = calculate_inflation_adjustment(base_expense, month)
+    expense_details = household_expenses(player, month)
+    adjusted_expense = expense_details['adjusted_living']
     
     # Bike discount on transport
     if bike_status:
         transport_base = LIFESTYLE_COSTS.get(lifestyle, LIFESTYLE_COSTS['city'])['transport']
         transport_saving = transport_base * 0.5
-        adjusted_expense -= transport_saving
         event_log.append(f"🏍️ Bike saves ₹{transport_saving:,.0f} on transport")
 
     spouse_expense = 0
@@ -134,7 +151,8 @@ def process_month_for_player(player: dict, month: int,
     # ── ADR-014: relationship + permanent household modifiers ──
     # satisfaction drift is bounded to +/-Rs3,000; the modifier is whatever the
     # player has permanently negotiated (e.g. the Saver's budget restructure).
-    satisfaction = float(player.get('spouse_satisfaction', SATISFACTION_START) or SATISFACTION_START)
+    satisfaction = player.get('spouse_satisfaction', SATISFACTION_START)
+    satisfaction = SATISFACTION_START if satisfaction is None else float(satisfaction)
     relationship_drift = 0.0
     if spouse_arch_id and spouse_arch_id != 'single':
         relationship_drift = satisfaction_expense_drift(satisfaction)
@@ -148,7 +166,7 @@ def process_month_for_player(player: dict, month: int,
     if abs(permanent_mod) >= 1:
         event_log.append(f"📉 Negotiated household savings: {permanent_mod:+,.0f}/month")
 
-    total_expense = adjusted_expense + spouse_expense + relationship_drift + permanent_mod
+    total_expense = expense_details['current']
     cash -= total_expense
     
     exp_desc = f"₹{adjusted_expense:,.0f}"

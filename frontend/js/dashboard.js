@@ -4,6 +4,7 @@
 
 let currentUser = null;
 let currentMonth = 1;
+let currentCourtship = null;
 
 // ── Auth Helper ──
 async function getAuthHeaders() {
@@ -199,6 +200,11 @@ async function loadDashboard() {
         }
         document.getElementById('pendingVal').innerText = formatINR(p.pending_cash_next_month || 0);
         document.getElementById('lifestyleVal').innerText = p.lifestyle_type === 'city' ? 'City' : 'Outer';
+        const expenseSummary = document.getElementById('expenseSummary');
+        if (expenseSummary && data.expenses) {
+            const e = data.expenses;
+            expenseSummary.textContent = `Base living: ${formatINR(e.base)} / month | Current household: ${formatINR(e.current)} / month`;
+        }
         document.getElementById('bikeVal').innerText = p.bike_status
             ? (p.bike_lock_in_months > 0 ? `Locked (${p.bike_lock_in_months}m)` : 'Free')
             : 'None';
@@ -242,6 +248,7 @@ async function loadDashboard() {
         // ── Courtship & Marriage UI Render ──
         const courtshipSec = document.getElementById('courtshipSection');
         const courtship = data.courtship;
+        currentCourtship = courtship;
         if (courtshipSec && courtship) {
             if (p.month === courtship.marriage_month && g.marriage_round_active && !p.spouse_archetype) {
                 courtshipSec.style.display = 'block';
@@ -304,7 +311,7 @@ async function loadDashboard() {
                                 </button>
                                 <button class="btn-glow" style="font-size:0.8rem; padding:0.5rem; background:var(--gradient-rose); border:none; color:white; font-weight:700; cursor:pointer;"
                                         onclick="proposeMarriage('${opt.id}')">
-                                    Propose (₹88,000)
+                                    Propose (${formatINR(courtship.wedding_cost)})
                                 </button>
                             </div>
                         </div>
@@ -467,7 +474,8 @@ window.revealTrait = async function(archetype_id, trait_key) {
 
 // ── Propose Marriage → POST /courtship/marry ──
 window.proposeMarriage = async function(archetype_id) {
-    if (!confirm("Are you sure you want to propose? Wedding costs ₹88,000 and this choice is final.")) return;
+    if (!currentCourtship || !Number.isFinite(currentCourtship.wedding_cost)) return;
+    if (!confirm(`Are you sure you want to propose? Wedding costs ${formatINR(currentCourtship.wedding_cost)} and this choice is final.`)) return;
     try {
         const h = await getAuthHeaders();
         const res = await fetch(`${API_BASE_URL}/courtship/marry`, {
@@ -489,24 +497,7 @@ window.proposeMarriage = async function(archetype_id) {
 
 // ── Format Revealed Trait ──
 function _formatRevealedTrait(archetype_id, trait_key) {
-    if (archetype_id === 'saver') {
-        if (trait_key === 'income') return '+₹10,000/mo';
-        if (trait_key === 'expense_mod') return '₹0/mo (net)';
-        if (trait_key === 'assets') return 'Gold ₹8K, EF ₹22K';
-    } else if (archetype_id === 'earner') {
-        if (trait_key === 'income') return '+₹36,000/mo';
-        if (trait_key === 'expense_mod') return '₹21,000/mo (net)';
-        if (trait_key === 'assets') return 'Brings no assets/liabilities';
-    } else if (archetype_id === 'investor') {
-        if (trait_key === 'income') return '+₹9,000/mo';
-        if (trait_key === 'expense_mod') return '₹8,000/mo (net)';
-        if (trait_key === 'assets') return 'Stocks ₹44K, Gold ₹20K, EF ₹24K';
-    } else if (archetype_id === 'anchor') {
-        if (trait_key === 'income') return '+₹14,000/mo';
-        if (trait_key === 'expense_mod') return '₹7,000/mo (net)';
-        if (trait_key === 'assets') return 'Stocks ₹8K, EF ₹45K';
-    }
-    return '?';
+    return currentCourtship?.reveals.find(r => r.archetype_id === archetype_id && r.trait_key === trait_key)?.revealed_value || '?';
 }
 
 
