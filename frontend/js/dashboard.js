@@ -250,76 +250,7 @@ async function loadDashboard() {
         const courtship = data.courtship;
         currentCourtship = courtship;
         if (courtshipSec && courtship) {
-            if (p.month === courtship.marriage_month && g.marriage_round_active && !p.spouse_archetype) {
-                courtshipSec.style.display = 'block';
-                const datesUsed = courtship.dates_used || 0;
-                document.getElementById('datesUsedVal').innerText = datesUsed;
-                
-                const extraNotice = document.getElementById('extraDateNotice');
-                if (datesUsed >= 3) {
-                    extraNotice.style.display = 'inline';
-                } else {
-                    extraNotice.style.display = 'none';
-                }
-                
-                const grid = document.getElementById('candidatesGrid');
-                grid.innerHTML = courtship.spouse_options.map(opt => {
-                    const isIncomeRevealed = courtship.reveals.some(r => r.archetype_id === opt.id && r.trait_key === 'income');
-                    const isExpenseRevealed = courtship.reveals.some(r => r.archetype_id === opt.id && r.trait_key === 'expense_mod');
-                    const isAssetsRevealed = courtship.reveals.some(r => r.archetype_id === opt.id && r.trait_key === 'assets');
-                    
-                    return `
-                        <div class="choice-card" style="display:flex; flex-direction:column; justify-content:space-between; padding:1.25rem;">
-                            <div>
-                                <div style="font-weight:700; font-size:1.05rem; color:var(--accent-rose); margin-bottom:0.25rem;">
-                                    <i class="fa-solid fa-heart" style="margin-right:0.4rem;"></i>${opt.name}
-                                </div>
-                                <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.75rem; min-height:48px; line-height:1.4;">
-                                    ${opt.description}
-                                </p>
-                                
-                                <div style="font-size:0.8rem; border-top:1px solid rgba(59,130,246,0.10); padding-top:0.6rem; margin-bottom:0.75rem; display:flex; flex-direction:column; gap:0.4rem;">
-                                    <div style="display:flex; justify-content:space-between;">
-                                        <span style="color:var(--text-muted);">Spouse Income:</span>
-                                        <span id="income-${opt.id}" style="font-weight:600; color:var(--text-secondary);">${isIncomeRevealed ? _formatRevealedTrait(opt.id, 'income') : '?'}</span>
-                                    </div>
-                                    <div style="display:flex; justify-content:space-between;">
-                                        <span style="color:var(--text-muted);">Spouse Expenses:</span>
-                                        <span id="expense-${opt.id}" style="font-weight:600; color:var(--text-secondary);">${isExpenseRevealed ? _formatRevealedTrait(opt.id, 'expense_mod') : '?'}</span>
-                                    </div>
-                                    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                                        <span style="color:var(--text-muted); white-space:nowrap; margin-right:0.5rem;">Spouse Assets:</span>
-                                        <span id="assets-${opt.id}" style="font-weight:600; text-align:right; color:var(--text-secondary); max-width:180px; word-break:break-word;">${isAssetsRevealed ? _formatRevealedTrait(opt.id, 'assets') : '?'}</span>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div style="display:flex; flex-direction:column; gap:0.4rem;">
-                                <div style="display:flex; gap:0.4rem;">
-                                    <button class="btn-ghost" style="flex:1; font-size:0.72rem; padding:0.4rem 0.2rem; border-color:rgba(244,63,94,0.3); color:var(--accent-rose);"
-                                            onclick="revealTrait('${opt.id}', 'income')" ${isIncomeRevealed ? 'disabled' : ''}>
-                                        Reveal Income
-                                    </button>
-                                    <button class="btn-ghost" style="flex:1; font-size:0.72rem; padding:0.4rem 0.2rem; border-color:rgba(244,63,94,0.3); color:var(--accent-rose);"
-                                            onclick="revealTrait('${opt.id}', 'expense_mod')" ${isExpenseRevealed ? 'disabled' : ''}>
-                                        Reveal Expense
-                                    </button>
-                                </div>
-                                <button class="btn-ghost" style="font-size:0.72rem; padding:0.4rem; border-color:rgba(244,63,94,0.3); color:var(--accent-rose);"
-                                        onclick="revealTrait('${opt.id}', 'assets')" ${isAssetsRevealed ? 'disabled' : ''}>
-                                    Reveal Portfolio
-                                </button>
-                                <button class="btn-glow" style="font-size:0.8rem; padding:0.5rem; background:var(--gradient-rose); border:none; color:white; font-weight:700; cursor:pointer;"
-                                        onclick="proposeMarriage('${opt.id}')">
-                                    Propose (${formatINR(courtship.wedding_cost)})
-                                </button>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-            } else {
-                courtshipSec.style.display = 'none';
-            }
+            renderFamilyOffers(courtshipSec, courtship, p, g);
         }
 
         // ── Optional Choices ──
@@ -475,7 +406,7 @@ window.revealTrait = async function(archetype_id, trait_key) {
 // ── Propose Marriage → POST /courtship/marry ──
 window.proposeMarriage = async function(archetype_id) {
     if (!currentCourtship || !Number.isFinite(currentCourtship.wedding_cost)) return;
-    if (!confirm(`Are you sure you want to propose? Wedding costs ${formatINR(currentCourtship.wedding_cost)} and this choice is final.`)) return;
+    if (!confirm(`Marry this spouse? Pay ${formatINR(currentCourtship.wedding_cost)} now. Spouse income and expenses start in Month ${currentCourtship.marriage_month + 1}. Existing assets and debts join now. This choice is final for this game.`)) return;
     try {
         const h = await getAuthHeaders();
         const res = await fetch(`${API_BASE_URL}/courtship/marry`, {

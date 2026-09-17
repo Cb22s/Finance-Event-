@@ -80,10 +80,9 @@ def net_worth_component(net_worth: float, month: int, spouse_income: float = 0.0
     Capped at NW_NORMALIZATION_CAP so extreme leverage cannot dominate. 0-100.
     """
     expected_resources = INITIAL_BUDGET + MONTHLY_INCOME * max(month - 1, 0)
-    # If married (spouse_income > 0), spouse income and the one-time injection
-    # apply from MARRIAGE_MONTH onward.
+    # The one-time injection applies at marriage; salary starts next month.
     if month >= MARRIAGE_MONTH and spouse_income > 0:
-        expected_resources += spouse_income * (month - MARRIAGE_MONTH + 1)
+        expected_resources += spouse_income * (month - MARRIAGE_MONTH)
         expected_resources += spouse_assets - wedding_cost
     if expected_resources <= 0:
         return 0.0

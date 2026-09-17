@@ -21,6 +21,10 @@ env/
 backend/.env
 .env
 
+# Local scratch/assistant helper files. These may contain one-off diagnostics or
+# copied secrets and must not be committed.
+.gemini/
+
 # Stray/deprecated backend copy inside the deployable frontend tree (F-05).
 # Must be deleted from the repo; ignored here so it can never ship a secret
 # via a Netlify folder-drag deploy of frontend/.

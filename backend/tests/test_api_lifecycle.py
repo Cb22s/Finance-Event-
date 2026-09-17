@@ -155,7 +155,7 @@ class ApiLifecycleTests(unittest.TestCase):
                 before_marriage = float(self.state()['cash'])
                 self.post('/courtship/marry', {'choice': 'saver'})
                 arc = ARCHETYPES['saver']
-                self.assertAlmostEqual(float(self.state()['cash']), before_marriage - WEDDING_COST + arc['income'] - SPOUSE_BASE_EXPENSE - arc['expense_mod'])
+                self.assertAlmostEqual(float(self.state()['cash']), before_marriage - WEDDING_COST)
                 self.post('/courtship/marry', {'choice': 'anchor'}, 400)
                 self.post('/admin/settings', {'negotiation_enabled': True})
             if month in (5, 6, 8):

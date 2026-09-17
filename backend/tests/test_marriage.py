@@ -1,6 +1,6 @@
 import unittest
 from engine.scoring import calculate_financial_health_score, net_worth_component
-from engine.monthly_processor import process_month_for_player
+from engine.monthly_processor import process_month_for_player, household_expenses
 from models.constants import (
     ARCHETYPES, SPOUSE_BASE_EXPENSE, MONTHLY_INCOME, LIFESTYLE_COSTS,
     INITIAL_BUDGET, WEDDING_COST, MARRIAGE_MONTH
@@ -15,6 +15,18 @@ def _net_injection(arch_id):
 
 
 class TestMarriageSystem(unittest.TestCase):
+    def test_spouse_expense_starts_after_marriage_month(self):
+        player = {"spouse_archetype": "saver", "lifestyle_type": "city"}
+        self.assertEqual(household_expenses(player, MARRIAGE_MONTH)["spouse"], 0)
+        self.assertEqual(household_expenses(player, MARRIAGE_MONTH + 1)["spouse"],
+                         SPOUSE_BASE_EXPENSE + ARCHETYPES["saver"]["expense_mod"])
+
+    def test_no_spouse_salary_in_marriage_month_score(self):
+        args = dict(net_worth=100000, month=MARRIAGE_MONTH,
+                    spouse_assets=35000, wedding_cost=WEDDING_COST)
+        self.assertEqual(net_worth_component(spouse_income=5000, **args),
+                         net_worth_component(spouse_income=16000, **args))
+
     # ── D-03 regression: net-worth normalization must be archetype-neutral ──
     def test_injected_assets_discount_the_ratio(self):
         # For a FIXED net worth, a spouse who brought more assets must not score
@@ -31,7 +43,7 @@ class TestMarriageSystem(unittest.TestCase):
         # married. Before D-03 the asset-heavy archetypes scored higher for the
         # same skill because their brought assets were missing from the denominator.
         month = 12
-        married_months = month - MARRIAGE_MONTH + 1
+        married_months = month - MARRIAGE_MONTH
         scores = []
         for arch_id, arc in ARCHETYPES.items():
             resources = (INITIAL_BUDGET + MONTHLY_INCOME * (month - 1)

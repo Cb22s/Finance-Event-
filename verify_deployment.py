@@ -15,12 +15,14 @@ except ImportError as e:
     SUPABASE_IMPORTED = False
     SUPABASE_IMPORT_ERROR = str(e)
 
-SUPABASE_URL = "https://ujoqdsesfctxmzmlxewu.supabase.co"
-SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqb3Fkc2VzZmN0eG16bWx4ZXd1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MzYwMTgwMiwiZXhwIjoyMDk5MTc3ODAyfQ.9zXvonC6BSfAMAzNeQxLfro6yPDiRkM1w-8aWyD-_EE"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+SUPABASE_CONFIGURED = bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
 
 def run_verification():
     report = {
         "supabase_import": "PASS" if SUPABASE_IMPORTED else f"FAIL ({SUPABASE_IMPORT_ERROR})",
+        "supabase_config": "PASS" if SUPABASE_CONFIGURED else "NOT CONFIGURED (set SUPABASE_URL and SUPABASE_SERVICE_KEY)",
         "checks": {}
     }
     
@@ -35,7 +37,7 @@ def run_verification():
         report["checks"]["1. Landing/login page loads"] = {"status": "NOT VERIFIED", "details": f"Connection failed: {e}"}
 
     # 2. Player login works
-    if SUPABASE_IMPORTED:
+    if SUPABASE_IMPORTED and SUPABASE_CONFIGURED:
         try:
             client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             res = client.table("users").select("id, name, email").limit(1).execute()
@@ -46,7 +48,8 @@ def run_verification():
         except Exception as e:
             report["checks"]["2. Player login works"] = {"status": "FAIL", "details": str(e)}
     else:
-        report["checks"]["2. Player login works"] = {"status": "NOT VERIFIED", "details": "supabase library missing"}
+        detail = "supabase library missing" if not SUPABASE_IMPORTED else "Supabase env vars missing"
+        report["checks"]["2. Player login works"] = {"status": "NOT VERIFIED", "details": detail}
 
     # 3. Player dashboard loads
     try:
@@ -132,7 +135,7 @@ def run_verification():
         report["checks"]["9. Insurance action works"] = {"status": "NOT VERIFIED", "details": str(e)}
 
     # 10. Events display correctly
-    if SUPABASE_IMPORTED:
+    if SUPABASE_IMPORTED and SUPABASE_CONFIGURED:
         try:
             client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             res = client.table("events").select("*").limit(5).execute()
@@ -143,7 +146,8 @@ def run_verification():
         except Exception as e:
             report["checks"]["10. Events display correctly"] = {"status": "FAIL", "details": str(e)}
     else:
-        report["checks"]["10. Events display correctly"] = {"status": "NOT VERIFIED", "details": "supabase library missing"}
+        detail = "supabase library missing" if not SUPABASE_IMPORTED else "Supabase env vars missing"
+        report["checks"]["10. Events display correctly"] = {"status": "NOT VERIFIED", "details": detail}
 
     # 11. Month progression works
     try:
@@ -210,7 +214,7 @@ def run_verification():
         report["checks"]["19. Backend health/API requests return successfully"] = {"status": "NOT VERIFIED", "details": str(e)}
 
     # 20. No 500 errors caused by missing RPCs or routes
-    if SUPABASE_IMPORTED:
+    if SUPABASE_IMPORTED and SUPABASE_CONFIGURED:
         try:
             client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             try:
@@ -235,7 +239,8 @@ def run_verification():
         except Exception as e:
             report["checks"]["20. No 500 errors caused by missing RPCs or routes"] = {"status": "FAIL", "details": str(e)}
     else:
-        report["checks"]["20. No 500 errors caused by missing RPCs or routes"] = {"status": "NOT VERIFIED", "details": "supabase library missing"}
+        detail = "supabase library missing" if not SUPABASE_IMPORTED else "Supabase env vars missing"
+        report["checks"]["20. No 500 errors caused by missing RPCs or routes"] = {"status": "NOT VERIFIED", "details": detail}
 
     print(json.dumps(report, indent=2))
 

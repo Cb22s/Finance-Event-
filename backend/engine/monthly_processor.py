@@ -9,7 +9,7 @@ from models.constants import (
     LOAN_INTEREST_RATE, AUTO_LOAN_INTEREST_RATE, LOAN_TERM_MONTHS,
     INFLATION_RATE_PER_MONTH, INFLATION_START_MONTH,
     ARCHETYPES, SPOUSE_BASE_EXPENSE, INSURANCE_PLANS, INSURABLE_CATEGORIES,
-    SATISFACTION_START, satisfaction_expense_drift
+    SATISFACTION_START, satisfaction_expense_drift, MARRIAGE_MONTH
 )
 
 
@@ -48,7 +48,7 @@ def household_expenses(player: dict, month: int) -> dict:
     base = living['total']
     inflated = calculate_inflation_adjustment(base, month)
     bike_saving = living['transport'] * 0.5 if player.get('bike_status') else 0
-    arc = ARCHETYPES.get(player.get('spouse_archetype'))
+    arc = ARCHETYPES.get(player.get('spouse_archetype')) if month > MARRIAGE_MONTH else None
     spouse = SPOUSE_BASE_EXPENSE + arc['expense_mod'] if arc else 0
     satisfaction = player.get('spouse_satisfaction', SATISFACTION_START)
     satisfaction = SATISFACTION_START if satisfaction is None else float(satisfaction)

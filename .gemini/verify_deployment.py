@@ -1,9 +1,13 @@
 import requests
 import json
+import os
 from supabase import create_client
 
-SUPABASE_URL = "https://ujoqdsesfctxmzmlxewu.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqb3Fkc2VzZmN0eG16bWx4ZXd1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MzYwMTgwMiwiZXhwIjoyMDk5MTc3ODAyfQ.9zXvonC6BSfAMAzNeQxLfro6yPDiRkM1w-8aWyD-_EE"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Set SUPABASE_URL and SUPABASE_SERVICE_KEY before running this script.")
 
 def run_tests():
     results = {}

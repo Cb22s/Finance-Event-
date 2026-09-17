@@ -188,7 +188,7 @@
 
         if (data.courtship && m === data.courtship.marriage_month && data.game && data.game.marriage_round_active && !p.spouse_archetype)
             return ['wed' + m, 'excited',
-                "It's the <strong>marriage round</strong>! 💍 Use your free dates to reveal traits first — decide with your head, not just your heart. 😄"];
+                "Your family has suggested potential spouses. Compare their monthly income and expenses, then choose one or skip marriage. Household changes begin next month."];
 
         if (market.stock_pct <= -0.10)
             return ['crash' + m, 'worried',

@@ -193,7 +193,11 @@ def get_dashboard():
         spouse_options.append({
             "id": arch_id,
             "name": data["name"],
-            "description": data["description"]
+            "description": data["description"],
+            "income": data["income"],
+            "expense": SPOUSE_BASE_EXPENSE + data["expense_mod"],
+            "assets": data["stocks"] + data["gold"] + data["ef"],
+            "debt": data["loan"]
         })
         
     courtship = {
@@ -1207,9 +1211,8 @@ def courtship_marry():
     arc = ARCHETYPES[choice]
     spouse_income = arc['income']
     spouse_expense = SPOUSE_BASE_EXPENSE + arc['expense_mod']
-    net_spouse_flow = spouse_income - spouse_expense
 
-    proj_cash = cash - WEDDING_COST + net_spouse_flow
+    proj_cash = cash - WEDDING_COST
     proj_stocks = stocks + arc['stocks']
     proj_gold = gold + arc['gold']
     proj_ef = ef + arc['ef']
@@ -1248,13 +1251,14 @@ def courtship_marry():
             "interest_rate": LOAN_INTEREST_RATE, "month_taken": MARRIAGE_MONTH, "status": "active",
         })
 
-    # A-01: wedding cost, spouse asset/liability injection, month-6 spouse flow, the
+    # Recurring spouse cash flow begins at the next month roll.
+    # A-01: wedding cost, spouse asset/liability injection, the
     # 'marry' claim and the spouse-loan insert all commit in ONE row-locked txn.
     try:
         updates = apply_player_txn(
             user_id, MARRIAGE_MONTH, action_key='marry', require_cash=float(WEDDING_COST),
             deltas={
-                "cash": round(net_spouse_flow - WEDDING_COST, 2),
+                "cash": -float(WEDDING_COST),
                 "stocks": round(arc['stocks'], 2),
                 "gold": round(arc['gold'], 2),
                 "emergency_fund": round(arc['ef'], 2),
@@ -1276,7 +1280,7 @@ def courtship_marry():
     summary = (
         f"💍 Married {arc['name']}! Paid ₹{WEDDING_COST:,} wedding cost. "
         f"Spouse added assets (Stocks +₹{arc['stocks']:,}, Gold +₹{arc['gold']:,}, EF +₹{arc['ef']:,}). "
-        f"Month {MARRIAGE_MONTH} spouse flow net: {net_spouse_flow:+,}."
+        f"Monthly spouse income {spouse_income:,} and expenses {spouse_expense:,} start in Month {MARRIAGE_MONTH + 1}."
     )
     try:
         supabase.table('player_month_log').insert({

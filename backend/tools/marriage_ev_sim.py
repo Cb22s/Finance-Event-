@@ -92,7 +92,7 @@ def simulate(archetype_name, strategy_name, market_on: bool, lifestyle="city", f
 
         income = MONTHLY_INCOME
         expense = expense_for(month, lifestyle)
-        if arc and month >= MARRIAGE_MONTH:
+        if arc and month > MARRIAGE_MONTH:
             income += arc["income"]
             expense += SPOUSE_BASE_EXPENSE + arc["expense_mod"]
 
@@ -239,4 +239,3 @@ if __name__ == "__main__":
 
     print("\nNOTE: with market OFF, archetype value depends entirely on the market")
     print("events YOU author. Re-run this after the months 2-12 content pack exists.")
-

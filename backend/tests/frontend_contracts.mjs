@@ -5,6 +5,7 @@ import vm from 'node:vm';
 const fixture = JSON.parse(fs.readFileSync(0, 'utf8'));
 const root = new URL('../../frontend/', import.meta.url);
 const dashboard = fs.readFileSync(new URL('js/dashboard.js', root), 'utf8');
+const familyOffers = fs.readFileSync(new URL('js/family-offers.js', root), 'utf8');
 let confirmation;
 const ctx = vm.createContext({
     document: { addEventListener() {} }, window: {}, console,
@@ -12,12 +13,13 @@ const ctx = vm.createContext({
     setTimeout() {}, setInterval() {}, clearInterval() {},
 });
 vm.runInContext(dashboard, ctx);
+vm.runInContext(familyOffers, ctx);
 vm.runInContext(`currentCourtship = ${JSON.stringify(fixture.courtship)}`, ctx);
 await ctx.window.proposeMarriage('saver');
 assert.ok(confirmation.includes(fixture.courtship.wedding_cost.toLocaleString('en-IN')));
 assert.equal(vm.runInContext("_formatRevealedTrait('saver', 'income')", ctx), 'Authoritative reveal');
 assert.equal(vm.runInContext("_formatRevealedTrait('anchor', 'income')", ctx), '?');
-assert.ok(dashboard.includes('formatINR(courtship.wedding_cost)'));
+assert.ok((dashboard + familyOffers).includes('formatINR(offers.wedding_cost)'));
 assert.ok(!dashboard.includes('88,000'));
 
 const elements = new Map();
